@@ -1,0 +1,73 @@
+# Enhanced Captcha OCR Requirements
+# Contains best OCR libraries for Vietnamese/English text recognition
+
+# ============================================================================
+# PRIMARY LIBRARY - Best for Vietnamese/Asian text
+# ============================================================================
+
+# PaddleOCR - Extremely accurate for Asian languages
+# Supports Vietnamese, Chinese, Japanese, etc.
+# Usually has highest accuracy on real-world images
+paddleocr==2.8.1.3
+paddlepaddle>=2.4.0
+opencv-python>=4.5.0
+
+# ============================================================================
+# FALLBACK LIBRARIES - High accuracy alternatives
+# ============================================================================
+
+# EasyOCR - Supports 80+ languages including Vietnamese and English
+# Very accurate, good balance of speed and accuracy
+easyocr>=1.6.0
+
+# KerasOCR - Deep learning based OCR
+# Good for recognizing characters, can be fine-tuned
+keras-ocr>=0.2.15
+
+# ============================================================================
+# CLASSIC LIBRARY - Reliable fallback
+# ============================================================================
+
+# Tesseract - Classic OCR engine, well-tested
+# Good for English, less accurate for complex images
+pytesseract>=0.3.10
+Pillow>=9.0.0
+
+# ============================================================================
+# SUPPORTING LIBRARIES
+# ============================================================================
+
+# Image processing
+opencv-python>=4.5.0
+numpy>=1.19.0
+scikit-image>=0.18.0
+
+# Machine learning
+tensorflow>=2.8.0  # For KerasOCR and advanced models
+torch>=1.9.0  # For some alternative methods
+
+# Data processing
+scipy>=1.7.0
+pandas>=1.3.0
+
+# ============================================================================
+# INSTALLATION GUIDE
+# ============================================================================
+#
+# Quick install (all libraries):
+# pip install -r requirements-ocr.txt
+#
+# Minimal install (lightweight):
+# pip install paddleocr easyocr pytesseract pillow opencv-python
+#
+# Production install (PaddleOCR only):
+# pip install paddleocr paddlepaddle opencv-python
+#
+# Note: First import may download model files (~200MB for PaddleOCR)
+# This is normal and happens only once
+#
+# For GPU support:
+# pip install paddlepaddle-gpu  # instead of paddlepaddle
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+# ============================================================================
