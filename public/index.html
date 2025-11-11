@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puppeteer Automation Monitor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Puppeteer Automation Monitor</h1>
+            <div class="status-bar">
+                <span class="status-item">
+                    <span class="status-label">Server:</span>
+                    <span id="serverStatus" class="status-badge status-connected">Connected</span>
+                </span>
+                <span class="status-item">
+                    <span class="status-label">WebSocket:</span>
+                    <span id="wsStatus" class="status-badge status-disconnected">Disconnected</span>
+                </span>
+                <span class="status-item">
+                    <span class="status-label">Automation:</span>
+                    <span id="automationStatus" class="status-badge status-idle">Idle</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="controls">
+            <button id="clearLogsBtn" class="btn btn-danger">🗑️ Clear Logs</button>
+            <button id="pauseLogsBtn" class="btn btn-warning">⏸️ Pause</button>
+            <button id="exportLogsBtn" class="btn btn-info">💾 Export</button>
+            <label class="checkbox-label">
+                <input type="checkbox" id="autoScrollCheckbox" checked>
+                Auto-scroll
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="showTimestampCheckbox" checked>
+                Show Timestamp
+            </label>
+        </div>
+
+        <div class="main-content">
+            <!-- Left Panel: Step Logs -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📋 Automation Steps</h2>
+                    <span id="stepCount" class="badge">0 steps</span>
+                </div>
+                <div id="stepLogs" class="log-container"></div>
+            </div>
+
+            <!-- Right Panel: WebSocket Logs -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🔌 WebSocket Messages</h2>
+                    <span id="wsMessageCount" class="badge">0 messages</span>
+                </div>
+                <div id="wsLogs" class="log-container"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Panel: System Logs -->
+        <div class="panel full-width">
+            <div class="panel-header">
+                <h2>🖥️ System Logs</h2>
+                <span id="systemLogCount" class="badge">0 logs</span>
+            </div>
+            <div id="systemLogs" class="log-container"></div>
+        </div>
+
+        <!-- Statistics Panel -->
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="stat-label">Total Messages</div>
+                <div class="stat-value" id="totalMessages">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">WebSocket Sent</div>
+                <div class="stat-value" id="wsSent">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">WebSocket Received</div>
+                <div class="stat-value" id="wsReceived">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Steps Completed</div>
+                <div class="stat-value" id="stepsCompleted">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Errors</div>
+                <div class="stat-value error" id="errorCount">0</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { matchTemplate } = require('./template_matcher');
+const { matchTemplate } = require('../captcha/template_matcher');
 const { takeFullPageScreenshot } = require('./screenshot_helper');
 
 async function findTemplateOnScreenshot(page, screenshotPath, templatePath) {
@@ -27,7 +27,7 @@ async function clickImage(page, templatesMap, templatesDir, templateName, logger
   return coords;
 }
 
-const cfg = require('./config');
+const cfg = require('../config/config');
 
 async function waitForTemplate(page, templatesMap, templatesDir, templateName, timeoutMs = cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, intervalMs = cfg.TEMPLATE_INTERVAL_MS, logger) {
   const deadline = Date.now() + timeoutMs;

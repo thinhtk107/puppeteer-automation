@@ -18,7 +18,7 @@ async function setupWebSocketHook(page, logger) {
     const hookScript = `
       // 1. CHỈ ĐỊNH URL MỤC TIÊU CỦA BẠN TẠI ĐÂY
       const targetUrl = "wss://carkgwaiz.hytsocesk.com/websocket"; // <-- THAY THẾ BẰNG URL CỦA BẠN
-      console.log(\`%cĐang "hook" vào WebSocket. Chỉ theo dõi URL: \${targetUrl}\`, 'color: blue; font-weight: bold;');
+      // console.log(\`%cĐang "hook" vào WebSocket. Chỉ theo dõi URL: \${targetUrl}\`, 'color: blue; font-weight: bold;');
       
       // Biến toàn cục để lưu ID phòng tốt nhất
       window.myBestRid = null; 
@@ -29,9 +29,14 @@ async function setupWebSocketHook(page, logger) {
       }
       WebSocket.prototype.send = function(data) {
         if (this.url === targetUrl) {
-          console.log('%cSOCKET (Target): Đang gửi ⬆️', 'color: orange; font-weight: bold;', data);
+          // // console.log('%cSOCKET (Target): Đang gửi ⬆️', 'color: orange; font-weight: bold;', data);
           window.myLastUsedSocket = this; // Lưu lại socket
-          console.log('%cSOCKET: Đã bắt được và lưu vào "window.myLastUsedSocket"', 'color: #9c27b0; font-weight: bold;');
+          // // console.log('%cSOCKET: Đã bắt được và lưu vào "window.myLastUsedSocket"', 'color: #9c27b0; font-weight: bold;');
+          
+          // Broadcast to monitoring UI
+          if (window.broadcastWebSocketMessage) {
+            window.broadcastWebSocketMessage('sent', data);
+          }
         }
         window.OriginalWebSocketSend.apply(this, arguments);
       };
@@ -43,8 +48,13 @@ async function setupWebSocketHook(page, logger) {
           const newCallback = function(event) {
             // Logic gốc: Log tin nhắn đến và lưu socket
             if (this.url === targetUrl) {
-              console.log('%cSOCKET (Target): Đã nhận ⬇️', 'color: green; font-weight: bold;', event.data);
+              // // console.log('%cSOCKET (Target): Đã nhận ⬇️', 'color: green; font-weight: bold;', event.data);
               window.myLastUsedSocket = this; // Cũng lưu lại socket
+              
+              // Broadcast to monitoring UI
+              if (window.broadcastWebSocketMessage) {
+                window.broadcastWebSocketMessage('received', event.data);
+              }
               
               const receivedData = event.data;
               let parsedData;
@@ -82,7 +92,7 @@ async function setupWebSocketHook(page, logger) {
                   
                   if (bestRoom && bestRoom.rid) {
                     window.myBestRid = bestRoom.rid;
-                    console.log(\`%cSOCKET (Auto-Find): Đã cập nhật phòng tốt nhất. RID: \${window.myBestRid} (với \${bestRoom.uC} người)\`, 'color: #00bcd4; font-weight: bold;');
+                    // console.log(\`%cSOCKET (Auto-Find): Đã cập nhật phòng tốt nhất. RID: \${window.myBestRid} (với \${bestRoom.uC} người)\`, 'color: #00bcd4; font-weight: bold;');
                   }
                 }
               }
@@ -90,7 +100,7 @@ async function setupWebSocketHook(page, logger) {
               // --- LOGIC 2: KÍCH HOẠT GỬI TIN (TỪ cmd: 907) ---
               // Vẫn dùng string check cho an toàn, phòng trường hợp 'cmd' không parse được
               if (receivedData.startsWith('[5,') && receivedData.includes('"cmd":907')) {
-                console.log('%cSOCKET (Auto-Trigger): Phát hiện "cmd":907. Đang chờ 15 giây...', 'color: red; font-style: italic;');
+                // console.log('%cSOCKET (Auto-Trigger): Phát hiện "cmd":907. Đang chờ 15 giây...', 'color: red; font-style: italic;');
                 
                 // Đợi 15 giây (15000 mili giây)
                 setTimeout(() => {
@@ -98,14 +108,14 @@ async function setupWebSocketHook(page, logger) {
                   // Nếu chưa tìm thấy (myBestRid là null), thì dùng giá trị cũ 6476537 làm dự phòng.
                   const ridToSend = window.myBestRid || 6476537;
                   
-                  console.log(\`%cSOCKET (Auto-Trigger): Chuẩn bị gửi message với RID: \${ridToSend}\`, 'color: red;');
+                  // console.log(\`%cSOCKET (Auto-Trigger): Chuẩn bị gửi message với RID: \${ridToSend}\`, 'color: red;');
                   
                   const messageArray = [5, "Simms", ridToSend, {"cmd": 900, "eid": 2, "v": 500}];
                   const messageString = JSON.stringify(messageArray);
                   
                   // Kiểm tra xem socket còn tồn tại và đang mở không
                   if (window.myLastUsedSocket && window.myLastUsedSocket.readyState === WebSocket.OPEN) {
-                    console.log('%cSOCKET (Auto-Send): Đang gửi ⬆️', 'color: red; font-weight: bold;', messageString);
+                    // console.log('%cSOCKET (Auto-Send): Đang gửi ⬆️', 'color: red; font-weight: bold;', messageString);
                     window.myLastUsedSocket.send(messageString);
                   } else {
                     console.error('SOCKET (Auto-Send): Không thể gửi tin nhắn. Socket đã bị đóng hoặc không tồn tại.');
@@ -125,11 +135,22 @@ async function setupWebSocketHook(page, logger) {
         }
       });
       
-      console.log('%c✅ WebSocket Hook đã được cài đặt thành công!', 'color: green; font-weight: bold; font-size: 14px;');
+      // console.log('%c✅ WebSocket Hook đã được cài đặt thành công!', 'color: green; font-weight: bold; font-size: 14px;');
     `;
 
     // Inject the hook script before any page loads
     await page.evaluateOnNewDocument(hookScript);
+    
+    // Expose broadcast function to browser context
+    await page.exposeFunction('broadcastWebSocketMessage', (direction, message) => {
+      if (global.broadcastToClients) {
+        global.broadcastToClients({
+          type: direction === 'sent' ? 'websocket-sent' : 'websocket-received',
+          message: message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
     
     logger && logger.log && logger.log('✓ WebSocket hook script injected successfully');
     logger && logger.log && logger.log('✓ Hook will activate when WebSocket is created');
@@ -139,9 +160,9 @@ async function setupWebSocketHook(page, logger) {
       // Setup listener for messages from server
       if (window.myLastUsedSocket) {
         window.myLastUsedSocket.onmessage = (event) => {
-          console.log('📬 Nhận được tin nhắn từ server: ', event.data);
+          // console.log('📬 Nhận được tin nhắn từ server: ', event.data);
         };
-        console.log('--- ✅ HOÀN TẤT HOOK ---');
+        // console.log('--- ✅ HOÀN TẤT HOOK ---');
       }
     `;
     
@@ -185,15 +206,27 @@ async function listenForWebSocketCreation(page, logger) {
     client.on('Network.webSocketCreated', (params) => {
       logger && logger.log && logger.log(`⚡ WEBSOCKET CREATED: ${params.url}`);
       logger && logger.log && logger.log(`   Request ID: ${params.requestId}`);
+      
+      // Broadcast to monitoring UI
+      if (global.broadcastToClients) {
+        global.broadcastToClients({
+          type: 'websocket-created',
+          url: params.url,
+          requestId: params.requestId,
+          timestamp: new Date().toISOString()
+        });
+      }
     });
     
     // Listen for WebSocket frames (messages)
     client.on('Network.webSocketFrameSent', (params) => {
-      logger && logger.log && logger.log(`⬆️ WebSocket SENT: ${params.response.payloadData}`);
+      // logger && logger.log && logger.log(`⬆️ WebSocket SENT: ${params.response.payloadData}`);
+      // Bỏ qua log để tránh spam
     });
     
     client.on('Network.webSocketFrameReceived', (params) => {
-      logger && logger.log && logger.log(`⬇️ WebSocket RECEIVED: ${params.response.payloadData}`);
+      // logger && logger.log && logger.log(`⬇️ WebSocket RECEIVED: ${params.response.payloadData}`);
+      // Bỏ qua log để tránh spam
     });
     
     logger && logger.log && logger.log('✓ WebSocket event listeners registered');
@@ -218,7 +251,7 @@ async function sendWebSocketMessage(page, message, logger) {
     
     const result = await page.evaluate((msg) => {
       if (window.myLastUsedSocket && window.myLastUsedSocket.readyState === WebSocket.OPEN) {
-        console.log('%cManual Send: Đang gửi ⬆️', 'color: purple; font-weight: bold;', msg);
+        // console.log('%cManual Send: Đang gửi ⬆️', 'color: purple; font-weight: bold;', msg);
         window.myLastUsedSocket.send(msg);
         return { success: true, message: 'Message sent successfully' };
       } else {

@@ -1,4 +1,4 @@
-const cfg = require('./config');
+const cfg = require('../config/config');
 
 async function clickAbsolute(page, absX, absY, logger) {
   logger && logger.log && logger.log(`clickAbsolute -> received screenshot-px ${absX},${absY}`);

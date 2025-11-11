@@ -3,7 +3,7 @@
  * Tương đương với SeleniumService.joinGameXoc() trong Java
  */
 
-const { waitForTemplate, clickImage } = require('./matcher_helper');
+const { waitForTemplate, clickImage } = require('../helpers/matcher_helper');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,101 +15,82 @@ const path = require('path');
  */
 async function joinGameXoc(page, templatesDir, logger) {
   try {
-    logger && logger.log && logger.log('\n========================================');
-    logger && logger.log && logger.log('   JOIN GAME XOC FLOW - START');
-    logger && logger.log && logger.log('========================================\n');
-
-    // BƯỚC 5: Dọn dẹp tất cả popup ban đầu
+    logger && logger.log && logger.log('🎮 Bắt đầu vào game...');
+    // Dọn dẹp popup
     await handleInitialPopups(page, templatesDir, logger);
-    await page.waitForTimeout(2000); // Chờ 2s sau khi dọn popup xong
-    logger && logger.log && logger.log('✓ Popup cleanup completed\n');
 
-    // BƯỚC 6: Click vào game XÓC ĐĨA
-    logger && logger.log && logger.log('\n--- BƯỚC 6: Tìm và click game "XÓC ĐĨA" ---');
-    const cfg = require('./config');
+    // Click vào game XÓC ĐĨA
+    logger && logger.log && logger.log('🎯 Tìm game XÓC ĐĨA...');
+    const cfg = require('../config/config');
     const templatesMap = buildTemplatesMap(templatesDir);
     
     let xocDiaClicked = false;
     
-    // Strategy 1: Find based on live_area.png position (most reliable)
+    // Strategy 1: Tìm dựa trên live_area.png
     try {
-      logger && logger.log && logger.log('Strategy 1: Finding XÓC ĐĨA based on live_area.png position...');
-      
-      // First, find live_area.png
       const liveAreaCoords = await waitForTemplate(
         page,
         templatesMap,
         templatesDir,
         'live_area.png',
-        10000, // 10 seconds timeout
+        10000,
         cfg.TEMPLATE_INTERVAL_MS || 500,
         logger
       );
       
       if (liveAreaCoords) {
-        logger && logger.log && logger.log(`✓ Found live_area at: (${liveAreaCoords.x}, ${liveAreaCoords.y})`);
-        
-        // XÓC ĐĨA is typically positioned BELOW and TO THE LEFT of live_area
-        // Based on typical game layout:
-        // - Live area is at top
-        // - Games are arranged in rows below
-        // - Xóc Đĩa is usually first game (leftmost)
-        
-        // Calculate Xóc Đĩa position relative to live_area
-        const xocDiaX = liveAreaCoords.x - 50;  // Slightly to the left
-        const xocDiaY = liveAreaCoords.y + 150; // Below live_area
+        // Tính toán vị trí Xóc Đĩa từ live_area
+        const xocDiaX = liveAreaCoords.x - 50;
+        const xocDiaY = liveAreaCoords.y + 150;
         
         logger && logger.log && logger.log(`Calculated XÓC ĐĨA position: (${xocDiaX}, ${xocDiaY})`);
         
-        const { clickAbsolute } = require('./click_helper');
+        const { clickAbsolute } = require('../helpers/click_helper');
         await clickAbsolute(page, xocDiaX, xocDiaY, logger);
         xocDiaClicked = true;
         logger && logger.log && logger.log('✓ Clicked "XÓC ĐĨA" based on live_area position');
       } else {
-        logger && logger.warn && logger.warn('Could not find live_area.png');
+        
+        const { clickAbsolute } = require('../helpers/click_helper');
+        await clickAbsolute(page, xocDiaX, xocDiaY, logger);
+        xocDiaClicked = true;
+        logger && logger.log && logger.log('✅ Đã click XÓC ĐĨA');
       }
     } catch (liveAreaError) {
-      logger && logger.warn && logger.warn('Strategy 1 failed:', liveAreaError.message);
+      logger && logger.warn && logger.warn('⚠️ Không tìm thấy live_area, thử cách khác...');
     }
     
-    // Strategy 2: Try template matching (may fail due to animation)
+    // Strategy 2: Template matching
     if (!xocDiaClicked) {
       try {
-        logger && logger.log && logger.log('Strategy 2: Trying template matching...');
         const xocDiaCoords = await waitForTemplate(
-          page, 
-          templatesMap, 
-          templatesDir, 
-          'game_xoc_dia.png', 
-          5000, // Short timeout since animation may prevent match
-          cfg.TEMPLATE_INTERVAL_MS || 500, 
-          logger
+          page, templatesMap, templatesDir, 'game_xoc_dia.png', 
+          5000, cfg.TEMPLATE_INTERVAL_MS || 500, logger
         );
         
         if (xocDiaCoords) {
-          const { clickAbsolute } = require('./click_helper');
+          const { clickAbsolute } = require('../helpers/click_helper');
           await clickAbsolute(page, xocDiaCoords.x, xocDiaCoords.y, logger);
           xocDiaClicked = true;
-          logger && logger.log && logger.log('✓ Clicked "XÓC ĐĨA" using template matching');
+          logger && logger.log && logger.log('✅ Đã click XÓC ĐĨA (template)');
         }
       } catch (templateError) {
-        logger && logger.warn && logger.warn('Strategy 2 failed:', templateError.message);
+        // Bỏ qua
       }
     }
     
-    // Strategy 3: Use fixed position based on game layout
+    // Strategy 3: Fixed position
     if (!xocDiaClicked) {
-      logger && logger.log && logger.log('Strategy 3: Using fixed position fallback...');
+      logger && logger.log && logger.log('⚙️ Dùng vị trí cố định...');
       
-      // Get canvas element
       const canvasElement = await page.$('#GameCanvas');
       if (!canvasElement) {
-        throw new Error('Canvas element not found');
+        throw new Error('Không tìm thấy canvas');
       }
       
       const boundingBox = await canvasElement.boundingBox();
       if (!boundingBox) {
-        throw new Error('Cannot get canvas bounding box');
+        throw new Error('Không lấy được bounding box');
       }
       
       // Based on the image you provided, Xóc Đĩa appears to be in the LEFT SIDE
@@ -120,7 +101,7 @@ async function joinGameXoc(page, templatesDir, logger) {
       logger && logger.log && logger.log(`Clicking at fixed position: (${clickX}, ${clickY})`);
       logger && logger.log && logger.log(`Canvas size: ${boundingBox.width}x${boundingBox.height}`);
       
-      const { clickAbsolute } = require('./click_helper');
+      const { clickAbsolute } = require('../helpers/click_helper');
       await clickAbsolute(page, clickX, clickY, logger);
       xocDiaClicked = true;
       logger && logger.log && logger.log('✓ Clicked "XÓC ĐĨA" using fixed position');
@@ -161,10 +142,14 @@ async function handleInitialPopups(page, templatesDir, logger) {
   logger && logger.log && logger.log('\n--- BƯỚC 5: Đang kiểm tra và dọn dẹp Popups ban đầu ---');
   
   const templateName = 'common_popup_X.png';
-  const maxChecks = 10;
+  const maxChecks = 1;
   let checks = 0;
-  const cfg = require('./config');
+  const cfg = require('../config/config');
   const templatesMap = buildTemplatesMap(templatesDir);
+
+  // Chờ một chút để popup có thời gian xuất hiện
+  logger && logger.log && logger.log('⏳ Chờ popup xuất hiện...');
+  await page.waitForTimeout(2000);
 
   while (checks < maxChecks) {
     checks++;
@@ -179,7 +164,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
         templatesMap,
         templatesDir,
         templateName,
-        2000, // Short timeout - if not found quickly, assume no popup
+        2000, // Tăng timeout lên 3s để chờ popup xuất hiện
         cfg.TEMPLATE_INTERVAL_MS || 500,
         logger
       );
@@ -193,11 +178,11 @@ async function handleInitialPopups(page, templatesDir, logger) {
       // Found popup X button - click it
       logger && logger.log && logger.log(`✓ Tìm thấy nút X tại: (${xButtonCoords.x}, ${xButtonCoords.y})`);
       
-      const { clickAbsolute } = require('./click_helper');
+      const { clickAbsolute } = require('../helpers/click_helper');
       await clickAbsolute(page, xButtonCoords.x, xButtonCoords.y, logger);
       logger && logger.log && logger.log('✓ Đã click vào nút X để đóng popup');
 
-      await page.waitForTimeout(1000); // Đợi popup đóng
+      await page.waitForTimeout(1500); // Đợi popup đóng và popup mới xuất hiện (nếu có)
       continue; // Kiểm tra tiếp popup khác
     } else {
       logger && logger.log && logger.log(`✗ Không tìm thấy popup nào`);
@@ -220,7 +205,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
  */
 async function clickPhungGame(page, templatesDir, templatesMap, logger) {
   try {
-    const cfg = require('./config');
+    const cfg = require('../config/config');
     
     let phungClicked = false;
     
@@ -247,7 +232,7 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger) {
         
         logger && logger.log && logger.log(`Clicking on PHỤNG text position: (${textPhungCoords.x}, ${textPhungCoords.y})`);
         
-        const { clickAbsolute } = require('./click_helper');
+        const { clickAbsolute } = require('../helpers/click_helper');
         await clickAbsolute(page, textPhungCoords.x, textPhungCoords.y, logger);
         phungClicked = true;
         logger && logger.log && logger.log('✓ Clicked "PHỤNG" based on text_phung.png position');
@@ -275,7 +260,7 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger) {
         if (phungCoords) {
           logger && logger.log && logger.log(`>>> Tìm thấy game PHỤNG tại: (${phungCoords.x}, ${phungCoords.y})`);
           
-          const { clickAbsolute } = require('./click_helper');
+          const { clickAbsolute } = require('../helpers/click_helper');
           await clickAbsolute(page, phungCoords.x, phungCoords.y, logger);
           phungClicked = true;
         }
@@ -305,7 +290,7 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger) {
       
       logger && logger.log && logger.log(`>>> Using fallback position: (${clickX}, ${clickY})`);
       
-      const { clickAbsolute } = require('./click_helper');
+      const { clickAbsolute } = require('../helpers/click_helper');
       await clickAbsolute(page, clickX, clickY, logger);
       phungClicked = true;
     }
@@ -354,8 +339,9 @@ function buildTemplatesMap(templatesDir) {
     });
   }
   
-  // Also check resources directory
-  const resourcesDir = path.join(__dirname, '..', 'resources');
+  // Also check resources directory (go up two levels from flows to main, then to src, then to resources)
+  const resourcesDir = path.join(__dirname, '..', '..', 'resources');
+
   if (fs.existsSync(resourcesDir)) {
     const files = fs.readdirSync(resourcesDir);
     files.forEach(file => {

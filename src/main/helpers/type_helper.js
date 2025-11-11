@@ -1,6 +1,6 @@
 async function typeIntoImageField(page, templatesMap, templatesDir, templateName, text, logger) {
   const path = require('path');
-  const cfg = require('./config');
+  const cfg = require('../config/config');
   const screenshotPath = path.join(templatesDir, 'page.png');
   await require('./screenshot_helper').takeFullPageScreenshot(page, screenshotPath);
   let templatePath = templatesMap[templateName];

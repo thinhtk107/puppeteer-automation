@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const cfg = require('./config');
+const cfg = require('../config/config');
 
 async function takeFullPageScreenshot(page, destPath) {
   try {

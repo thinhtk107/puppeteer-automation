@@ -1,8 +1,9 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const { performFullLoginViaImages } = require('./login_flow');
-const { setupWebSocketHook, listenForWebSocketCreation, getWebSocketState } = require('./websocket_hook');
+const { performFullLoginViaImages } = require('./flows/login_flow');
+const { setupWebSocketHook, listenForWebSocketCreation, getWebSocketState } = require('./websocket/websocket_hook');
+const { cleanupAllTempFiles } = require('./helpers/cleanup_helper');
 
 /**
  * Main entrypoint kept similar: payload { url, actions, loginRequest, proxyHost, proxyPort }
@@ -44,12 +45,37 @@ async function runAutomation(payload, uploadedFiles) {
   // avoid relying on window.screen which can force a fullscreen feeling; pick a sensible default
   await page.setViewport({ width: 1280, height: 800 });
   
-  // lightweight logger for this run
+  // Helper function to broadcast messages to WebSocket clients
+  const broadcast = (data) => {
+    if (global.broadcastToClients) {
+      global.broadcastToClients(data);
+    }
+  };
+  
+  // Broadcast automation start
+  broadcast({ type: 'automation-start', timestamp: new Date().toISOString() });
+  
+  // lightweight logger for this run with WebSocket broadcasting
   const logger = {
     steps: [],
-    log: (...args) => { console.log(...args); logger.steps.push({ level: 'info', text: args.join(' ') }); },
-    warn: (...args) => { console.warn(...args); logger.steps.push({ level: 'warn', text: args.join(' ') }); },
-    error: (...args) => { console.error(...args); logger.steps.push({ level: 'error', text: args.join(' ') }); }
+    log: (...args) => { 
+      const message = args.join(' ');
+      console.log(...args); 
+      logger.steps.push({ level: 'info', text: message });
+      broadcast({ type: 'log', level: 'info', message, timestamp: new Date().toISOString() });
+    },
+    warn: (...args) => { 
+      const message = args.join(' ');
+      console.warn(...args); 
+      logger.steps.push({ level: 'warn', text: message });
+      broadcast({ type: 'log', level: 'warn', message, timestamp: new Date().toISOString() });
+    },
+    error: (...args) => { 
+      const message = args.join(' ');
+      console.error(...args); 
+      logger.steps.push({ level: 'error', text: message });
+      broadcast({ type: 'log', level: 'error', message, timestamp: new Date().toISOString() });
+    }
   };
 
   // ===== PROXY AUTHENTICATION =====
@@ -71,29 +97,45 @@ async function runAutomation(payload, uploadedFiles) {
   // ===== VERIFY PROXY IP =====
   if (proxyAddress) {
     try {
-      logger.log('[PROXY] Verifying proxy connection and IP address...');
+      logger.log('🌐 Kiểm tra kết nối proxy...');
       await page.goto('https://api.ipify.org', { waitUntil: 'networkidle2', timeout: 30000 });
       
-      // Get IP from page body
       const proxyIP = await page.evaluate(() => {
         return document.body.textContent.trim();
       });
       
-      logger.log(`[PROXY] ✓ Current browser IP: ${proxyIP}`);
-      logger.log(`[PROXY] ✓ Proxy connection verified successfully`);
-      
-      // Store proxy IP for later reference
+      logger.log(`✓ IP hiện tại: ${proxyIP}`);
       page._proxyIP = proxyIP;
       
     } catch (err) {
-      logger.error(`[PROXY] ✗ Failed to verify proxy IP: ${err.message}`);
-      logger.warn('[PROXY] Continuing anyway, but proxy may not be working correctly');
+      logger.error(`✗ Lỗi kiểm tra proxy: ${err.message}`);
     }
   }
 
   // Forward browser console messages and errors to Node console for debugging
   page.on('console', msg => {
     try {
+      const text = msg.text();
+      
+      // Bỏ qua log từ WebSocket hook
+      if (text.includes('SOCKET') || text.includes('WebSocket') || text.includes('hook')) {
+        return;
+      }
+      
+      // Bỏ qua log không cần thiết từ game
+      if (text.includes('safeRoundNumber') || 
+          text.includes('convertUSD') || 
+          text.includes('Create unpacker') ||
+          text.includes('Cocos Creator') ||
+          text.includes('LoadScene')) {
+        return;
+      }
+      
+      // Bỏ qua warning rỗng
+      if (msg.type() === 'warning' && !text.trim()) {
+        return;
+      }
+      
       const args = msg.args().map(a => a.toString());
       logger.log(`PAGE LOG [${msg.type()}]:`, ...args);
     } catch (e) {
@@ -109,9 +151,7 @@ async function runAutomation(payload, uploadedFiles) {
   // ===== SETUP WEBSOCKET HOOK (BEFORE NAVIGATION) =====
   if (payload.enableWebSocketHook !== false) {
     try {
-      logger.log('\n========================================');
-      logger.log('   WEBSOCKET HOOK - INITIALIZING');
-      logger.log('========================================\n');
+      logger.log('🔌 Khởi tạo WebSocket hook...');
       
       // Setup CDP listener for WebSocket creation events
       await listenForWebSocketCreation(page, logger);
@@ -119,21 +159,17 @@ async function runAutomation(payload, uploadedFiles) {
       // Inject WebSocket hook script before page loads
       await setupWebSocketHook(page, logger);
       
-      logger.log('✓ WebSocket hook is ready and will activate on page load\n');
+      logger.log('✓ WebSocket hook đã sẵn sàng\n');
     } catch (wsError) {
-      logger.error('Failed to setup WebSocket hook:', wsError.message);
-      logger.warn('Continuing without WebSocket hook...');
+      logger.error('✗ Lỗi setup WebSocket hook:', wsError.message);
     }
   }
   
-  // Navigate to URL (WebSocket hook will activate here)
+  // Navigate to URL
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  
-  // Đợi thêm để đảm bảo tất cả resources đã load xong
-  logger.log('Page loaded, waiting for page to be fully ready...');
   await page.waitForTimeout(2000);
   
-  // Đợi document ready
+  // Wait for document ready
   await page.evaluate(() => {
     return new Promise((resolve) => {
       if (document.readyState === 'complete') {
@@ -144,49 +180,31 @@ async function runAutomation(payload, uploadedFiles) {
     });
   });
   
-  logger.log('Page is fully ready, proceeding with automation...');
+  logger.log('✓ Trang web đã sẵn sàng');
   
   // ===== CHECK WEBSOCKET STATE AFTER PAGE LOAD =====
   if (payload.enableWebSocketHook !== false) {
     try {
-      logger.log('\n========================================');
-      logger.log('   WEBSOCKET STATUS CHECK');
-      logger.log('========================================\n');
-      
-      // Wait a bit more for WebSocket to be created
       await page.waitForTimeout(5000);
       
-      // Get current WebSocket state
       const wsState = await getWebSocketState(page, logger);
       
       if (wsState && wsState.exists) {
-        logger.log(`✓ WebSocket hooked successfully!`);
-        logger.log(`  State: ${wsState.readyStateText}`);
-        logger.log(`  URL: ${wsState.url}`);
+        logger.log(`✓ WebSocket: ${wsState.readyStateText} - ${wsState.url}`);
         if (wsState.bestRid) {
-          logger.log(`  Best Room ID: ${wsState.bestRid}`);
+          logger.log(`✓ Best Room ID: ${wsState.bestRid}`);
         }
-      } else {
-        logger.warn('⚠️ WebSocket not yet created. Hook will activate when WebSocket connects.');
       }
-      
-      logger.log('');
     } catch (wsCheckError) {
-      logger.warn('Could not check WebSocket state:', wsCheckError.message);
+      // Không cần log lỗi chi tiết
     }
   }
   
   // ===== LOG PROXY STATUS =====
-  if (proxyAddress) {
-    logger.log(`✓ [PROXY] Connected via: ${proxyAddress}`);
-    if (payload.proxyUser || process.env.PROXY_USER) {
-      logger.log(`✓ [PROXY AUTH] Authenticated as user`);
-    }
-    if (page._proxyIP) {
-      logger.log(`✓ [PROXY IP] Verified IP address: ${page._proxyIP}`);
-    }
-  } else {
-    logger.log('ℹ [PROXY] No proxy configured');
+  if (proxyAddress && page._proxyIP) {
+    logger.log(`✓ Proxy: ${proxyAddress} (IP: ${page._proxyIP})`);
+  } else if (proxyAddress) {
+    logger.log(`✓ Proxy: ${proxyAddress}`);
   }
 
   // prepare uploaded templates map
@@ -241,7 +259,7 @@ async function runAutomation(payload, uploadedFiles) {
         // Verify login popup is closed by checking if it's no longer visible
         try {
           logger.log('Verifying login popup is closed...');
-          const { waitForTemplate } = require('./matcher_helper');
+          const { waitForTemplate } = require('./helpers/matcher_helper');
           const cfg = require('./config');
           
           const popupStillVisible = await new Promise((resolve) => {
@@ -271,7 +289,7 @@ async function runAutomation(payload, uploadedFiles) {
         // Wait for canvas to stabilize after login
         logger.log('Waiting for game canvas to stabilize...');
         try {
-          const { waitForCanvasAndStabilize } = require('./screenshot_helper');
+          const { waitForCanvasAndStabilize } = require('./helpers/screenshot_helper');
           await waitForCanvasAndStabilize(page, 3000);
           logger.log('✓ Canvas stabilized');
         } catch (canvasError) {
@@ -282,7 +300,7 @@ async function runAutomation(payload, uploadedFiles) {
         // Now execute join game flow
         logger.log('Starting join game flow...');
         try {
-          const { joinGameXoc } = require('./join_game_flow');
+          const { joinGameXoc } = require('./flows/join_game_flow');
           logger.log('✓ join_game_flow module loaded successfully');
           
           await joinGameXoc(page, templatesDir, logger);
@@ -324,6 +342,23 @@ async function runAutomation(payload, uploadedFiles) {
     }
   }
 
+  // ===== CLEANUP: Xóa các file upload sau khi sử dụng =====
+  try {
+    logger.log('🧹 Dọn dẹp file tạm...');
+    
+    const projectRoot = path.join(__dirname, '..', '..');
+    const stats = cleanupAllTempFiles(projectRoot, logger);
+    
+    const totalDeleted = stats.uploads + stats.srcUploads + stats.captchaScreenshots;
+    if (totalDeleted > 0) {
+      logger.log(`✓ Đã xóa ${totalDeleted} file tạm`);
+    } else {
+      logger.log('✓ Không có file tạm cần xóa');
+    }
+  } catch (cleanupErr) {
+    logger.warn('⚠️ Không thể dọn dẹp file tạm:', cleanupErr.message);
+  }
+
   logger.log('runAutomation -> finished, keepBrowser=', keepBrowser);
   if (!keepBrowser) {
     await browser.close();
@@ -331,6 +366,15 @@ async function runAutomation(payload, uploadedFiles) {
   } else {
     logger.log('Browser kept open for inspection.');
   }
+  
+  // Broadcast automation complete
+  if (global.broadcastToClients) {
+    global.broadcastToClients({ 
+      type: 'automation-complete', 
+      timestamp: new Date().toISOString() 
+    });
+  }
+  
   return { results, logs: logger.steps };
 }
 

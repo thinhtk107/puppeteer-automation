@@ -85,7 +85,7 @@ async function detectColorByTemplateMatching(page, resourcesDir, logger) {
     // Validate resources directory
     let actualResourcesDir = resourcesDir;
     if (!actualResourcesDir || !fs.existsSync(actualResourcesDir)) {
-      actualResourcesDir = path.join(__dirname, '..', 'resources');
+      actualResourcesDir = path.join(__dirname, '..', '..', 'resources');
       logger && logger.log && logger.log(`  ℹ  Using default resources directory: ${actualResourcesDir}`);
     }
     
@@ -176,12 +176,12 @@ async function detectTargetColorFromInstruction(page, resourcesDir, logger) {
     logger && logger.log && logger.log('  Step 1: Locating instruction anchor template...');
     
     const { matchTemplate } = require('./template_matcher');
-    const { readCaptchaWithGitHubModels } = require('./github_models_helper');
+    const { readCaptchaWithGitHubModels } = require('../websocket/github_models_helper');
     
     // Validate resources directory
     let actualResourcesDir = resourcesDir;
     if (!actualResourcesDir || !fs.existsSync(actualResourcesDir)) {
-      actualResourcesDir = path.join(__dirname, '..', 'resources');
+      actualResourcesDir = path.join(__dirname, '..', '..', 'resources');
       logger && logger.log && logger.log(`  ℹ  Using default resources directory: ${actualResourcesDir}`);
     }
     
@@ -258,7 +258,7 @@ async function detectTargetColorFromInstruction(page, resourcesDir, logger) {
     // Step 3: OCR on instruction text using Tesseract (save GitHub Models rate limit)
     logger && logger.log && logger.log('  Step 3: Running OCR on instruction text (Tesseract)...');
     
-    const { readCaptchaWithTesseract } = require('./github_models_helper');
+    const { readCaptchaWithTesseract } = require('../websocket/github_models_helper');
     let instructionText = await readCaptchaWithTesseract(instructionTextPath, logger);
     instructionText = (instructionText || '').toLowerCase().trim();
     
@@ -732,70 +732,6 @@ async function extractColoredPixelsHSV(imageBuffer, colorName, logger) {
 }
 
 /**
- * Main function: Extract complex captcha with MULTIPLE colors
- * For captchas where text appears in different colors
- * Uses PaddleOCR for high accuracy
- */
-async function extractCaptchaMultiColor(page, captchaCoords, outputDir, logger) {
-  logger && logger.log && logger.log('=== MULTI-COLOR CAPTCHA EXTRACTION (GitHub Models Only) ===');
-  
-  try {
-    const { locateCaptchaImage } = require('./captcha_helper');
-    const { readCaptchaWithGitHubModels } = require('./github_models_helper');
-    
-    // Step 1: Locate captcha components
-    logger && logger.log && logger.log('Step 1: Locating captcha components...');
-    const captchaLocation = await locateCaptchaImage(page, captchaCoords, outputDir, logger);
-    
-    if (!captchaLocation) {
-      throw new Error('Failed to locate captcha image');
-    }
-    
-    // Step 2: Load captcha image
-    logger && logger.log && logger.log('Step 2: Loading captcha image...');
-    const captchaImageBuffer = fs.readFileSync(captchaLocation.imagePath);
-    
-    // Step 3: Extract ALL 3 colors simultaneously for complex captchas
-    logger && logger.log && logger.log('Step 3: Extracting text from all 3 colors (red, green, black)...');
-    const targetColors = ['red', 'green', 'black'];
-    const maskedImagePath = await extractMultipleColoredPixelsHSV(captchaImageBuffer, targetColors, logger);
-    
-    // Step 4: OCR on multi-color masked image using GitHub Models
-    logger && logger.log && logger.log('Step 4: Running OCR with GitHub Models...');
-    let captchaText = '';
-    
-    try {
-      logger && logger.log && logger.log('→ Attempting GitHub Models GPT-4V...');
-      captchaText = await readCaptchaWithGitHubModels(maskedImagePath, logger);
-      
-      if (captchaText && captchaText.length > 0) {
-        logger && logger.log && logger.log(`✅ GitHub Models succeeded: "${captchaText}"`);
-      } else {
-        throw new Error('GitHub Models returned empty result');
-      }
-    } catch (githubModelsError) {
-      logger && logger.error && logger.error(`❌ GitHub Models failed: ${githubModelsError.message}`);
-      captchaText = '';
-    }
-    
-    // Clean result
-    captchaText = (captchaText || '')
-      .replace(/\s+/g, '')
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .trim();
-    
-    logger && logger.log && logger.log(`✓ Multi-color OCR result: "${captchaText}" (${captchaText.length} chars)`);
-    logger && logger.log && logger.log('=== MULTI-COLOR EXTRACTION COMPLETE ===');
-    
-    return captchaText;
-    
-  } catch (err) {
-    logger && logger.error && logger.error('Multi-color extraction failed:', err.message);
-    throw err;
-  }
-}
-
-/**
  * Main function: Solve CAPTCHA on popup (Original Logic - using captcha_helper)
  * Steps:
  * 1. Locate captcha image from page screenshot (using captcha_helper)
@@ -808,7 +744,7 @@ async function solveCaptchaOnPopup(page, captchaCoords, outputDir, logger) {
   
   try {
     const { locateCaptchaImage } = require('./captcha_helper');
-    const { readCaptchaWithGitHubModels } = require('./github_models_helper');
+    const { readCaptchaWithGitHubModels } = require('../websocket/github_models_helper');
     
     // Step 1: Locate captcha image from page screenshot
     logger && logger.log && logger.log('Step 1: Capturing captcha image from page...');
@@ -827,7 +763,7 @@ async function solveCaptchaOnPopup(page, captchaCoords, outputDir, logger) {
     
     // Step 3: Detect target color by reading instruction text
     logger && logger.log && logger.log('Step 3: Detecting target color from instruction text...');
-    const resourcesDir = path.join(__dirname, '..', 'resources');
+    const resourcesDir = path.join(__dirname, '..', '..', 'resources');
     
     // Use new logic: capture text right of anchor and OCR it
     let targetColor = await detectTargetColorFromInstruction(page, resourcesDir, logger);
@@ -879,6 +815,5 @@ module.exports = {
   extractColoredPixelsHSV,
   extractMultipleColoredPixelsHSV,
   rgbToHsv,
-  extractCaptchaMultiColor,
   solveCaptchaOnPopup
 };

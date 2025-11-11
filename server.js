@@ -6,15 +6,25 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
+const http = require('http');
+const WebSocket = require('ws');
 const { runAutomation } = require('./src/main/automation');
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 const upload = multer({ dest: path.join(__dirname, 'uploads/') });
+
+// Store connected WebSocket clients
+const clients = new Set();
 
 // Middlewares
 app.use(cors()); // allow cross-origin calls (useful for testing)
 app.use(express.json({ limit: '5mb' })); // parse application/json
 app.use(express.urlencoded({ extended: true, limit: '5mb' })); // parse form bodies
+
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
 
 // simple request logger for debugging
 app.use((req, res, next) => {
@@ -67,6 +77,58 @@ app.post('/api/v1/login', async (req, res) => {
   }
 });
 
+// ===== WEBSOCKET HANDLER =====
+wss.on('connection', (ws) => {
+  console.log('New WebSocket client connected');
+  clients.add(ws);
+  
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'log',
+    level: 'info',
+    message: 'Connected to Puppeteer Automation Server'
+  }));
+  
+  ws.on('close', () => {
+    console.log('WebSocket client disconnected');
+    clients.delete(ws);
+  });
+  
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
+    clients.delete(ws);
+  });
+});
+
+// ===== BROADCAST FUNCTION =====
+function broadcast(data) {
+  const message = JSON.stringify(data);
+  clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.send(message);
+      } catch (error) {
+        console.error('Error sending to client:', error);
+      }
+    }
+  });
+}
+
+// Export broadcast function for use in automation
+global.broadcastToClients = broadcast;
+
+// ===== HOME PAGE =====
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`\n========================================`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📊 Monitor UI: http://localhost:${PORT}`);
+  console.log(`📡 WebSocket: ws://localhost:${PORT}`);
+  console.log(`🔌 API: http://localhost:${PORT}/api/v1/login`);
+  console.log(`========================================\n`);
+});
