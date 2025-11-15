@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Puppeteer Automation Monitor</title>
+    <title>Puppeteer Automation Control Panel</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🤖 Puppeteer Automation Monitor</h1>
+            <h1>🤖 Puppeteer Automation Control Panel</h1>
             <div class="status-bar">
                 <span class="status-item">
                     <span class="status-label">Server:</span>
@@ -25,6 +25,300 @@
                 </span>
             </div>
         </header>
+
+        <!-- Login Form Section -->
+        <div class="login-section">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>🔐 Cấu hình đăng nhập</h2>
+                </div>
+                <form id="loginForm" class="login-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="url">🌐 URL Website:</label>
+                            <input type="url" id="url" name="url" value="https://v.hit.club/" required 
+                                   placeholder="https://example.com">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="username">👤 Username:</label>
+                            <input type="text" id="username" name="username" required 
+                                   value="hsgdfsdfjgs"
+                                   placeholder="Nhập username">
+                        </div>
+                        <div class="form-group">
+                            <label for="password">🔑 Password:</label>
+                            <input type="password" id="password" name="password" required 
+                                   value="1122334455"
+                                   placeholder="Nhập password">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="baseBetAmount">💰 Số tiền cược cơ bản:</label>
+                            <select id="baseBetAmount" name="baseBetAmount" required>
+                                <option value="500" selected>500</option>
+                                <option value="1000">1,000 (1K)</option>
+                                <option value="2000">2,000 (2K)</option>
+                                <option value="5000">5,000 (5K)</option>
+                                <option value="10000">10,000 (10K)</option>
+                                <option value="50000">50,000 (50K)</option>
+                                <option value="100000">100,000 (100K)</option>
+                                <option value="500000">500,000 (500K)</option>
+                                <option value="1000000">1,000,000 (1M)</option>
+                                <option value="5000000">5,000,000 (5M)</option>
+                                <option value="10000000">10,000,000 (10M)</option>
+                                <option value="50000000">50,000,000 (50M)</option>
+                                <option value="100000000">100,000,000 (100M)</option>
+                            </select>
+                            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                                Số tiền sẽ nhân đôi khi thua (Martingale)
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label for="initialBalance">💵 Số dư ban đầu (Optional):</label>
+                            <input type="number" id="initialBalance" name="initialBalance" 
+                                   placeholder="Nhập số dư hiện tại (để theo dõi)">
+                            <small style="color: var(--text-secondary); margin-top: 4px; display: block;">
+                                Chỉ để hiển thị, không ảnh hưởng logic
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="joinGameXoc" name="joinGameXoc" checked>
+                                <span>🎮 Tự động vào game sau khi login</span>
+                            </label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="enableWebSocketHook" name="enableWebSocketHook" checked>
+                                <span>🔌 Bật WebSocket Hook</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Proxy Settings (Collapsible) -->
+                    <div class="form-section">
+                        <button type="button" class="collapse-btn" onclick="toggleProxySection()">
+                            <span id="proxyToggleIcon">▶</span> Cấu hình Proxy (Optional)
+                        </button>
+                        <div id="proxySection" class="proxy-section" style="display: none;">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="proxyHost">🌍 Proxy Host:</label>
+                                    <input type="text" id="proxyHost" name="proxyHost" 
+                                           value="103.14.225.33"
+                                           placeholder="proxy.example.com">
+                                </div>
+                                <div class="form-group">
+                                    <label for="proxyPort">🔌 Proxy Port:</label>
+                                    <input type="number" id="proxyPort" name="proxyPort" 
+                                           value="43784"
+                                           placeholder="8080">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="proxyUser">👤 Proxy Username:</label>
+                                    <input type="text" id="proxyUser" name="proxyUser" 
+                                           value="proxyviet"
+                                           placeholder="Proxy username (nếu có)">
+                                </div>
+                                <div class="form-group">
+                                    <label for="proxyPass">🔑 Proxy Password:</label>
+                                    <input type="password" id="proxyPass" name="proxyPass" 
+                                           value="lYdJ0j4L"
+                                           placeholder="Proxy password (nếu có)">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="startBtn">
+                            🚀 Bắt đầu Automation
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="stopBtn" disabled>
+                            ⏹️ Dừng lại
+                        </button>
+                        <button type="reset" class="btn btn-warning">
+                            🔄 Reset Form
+                        </button>
+                    </div>
+
+                    <div id="formMessage" class="form-message"></div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Betting Statistics Panel -->
+        <div class="betting-stats-section" id="bettingStatsSection" style="display: none;">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>📊 Thống kê cược</h2>
+                    <button class="btn btn-sm btn-danger" onclick="resetBettingStats()">🔄 Reset</button>
+                </div>
+                <div class="betting-stats-content">
+                    <div class="stats-grid">
+                        <div class="stat-card stat-balance">
+                            <div class="stat-label">💵 Số dư hiện tại</div>
+                            <div class="stat-value" id="currentBalance">0</div>
+                        </div>
+                        <div class="stat-card stat-bet">
+                            <div class="stat-label">💰 Tiền cược hiện tại</div>
+                            <div class="stat-value" id="currentBetDisplay">500</div>
+                        </div>
+                        <div class="stat-card stat-wins">
+                            <div class="stat-label">✅ Số lần thắng</div>
+                            <div class="stat-value" id="winCount">0</div>
+                        </div>
+                        <div class="stat-card stat-losses">
+                            <div class="stat-label">❌ Số lần thua</div>
+                            <div class="stat-value" id="lossCount">0</div>
+                        </div>
+                        <div class="stat-card stat-profit">
+                            <div class="stat-label">📈 Lợi nhuận</div>
+                            <div class="stat-value" id="totalProfit">0</div>
+                        </div>
+                        <div class="stat-card stat-total">
+                            <div class="stat-label">🎯 Tổng cược</div>
+                            <div class="stat-value" id="totalBets">0</div>
+                        </div>
+                        <div class="stat-card stat-winrate">
+                            <div class="stat-label">📊 Tỷ lệ thắng</div>
+                            <div class="stat-value" id="winRate">0%</div>
+                        </div>
+                        <div class="stat-card stat-highest">
+                            <div class="stat-label">🔝 Cược cao nhất</div>
+                            <div class="stat-value" id="highestBet">0</div>
+                        </div>
+                        <div class="stat-card stat-runtime">
+                            <div class="stat-label">⏱️ Thời gian chạy</div>
+                            <div class="stat-value" id="runtime">00:00</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bank Status -->
+                    <div class="bank-status">
+                        <h3>🏦 Trạng thái Bank & Streak</h3>
+                        <div class="bank-grid">
+                            <div class="bank-item">
+                                <span class="bank-label">Bộ 2:</span>
+                                <span class="bank-value" id="bankL2">0</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Bộ 3:</span>
+                                <span class="bank-value" id="bankL3">0</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Bộ 4:</span>
+                                <span class="bank-value" id="bankL4">0</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Bộ 5:</span>
+                                <span class="bank-value" id="bankL5">0</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Bộ 6:</span>
+                                <span class="bank-value" id="bankL6">0</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Chuỗi hiện tại:</span>
+                                <span class="bank-value" id="currentStreak">-</span>
+                            </div>
+                            <div class="bank-item">
+                                <span class="bank-label">Trạng thái:</span>
+                                <span class="bank-value" id="bettingStatus">Đang chờ</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Real-time Stats from Browser -->
+                    <div class="realtime-stats">
+                        <h3>⚡ Thống kê thời gian thực</h3>
+                        <div class="realtime-grid">
+                            <div class="realtime-item">
+                                <span class="realtime-label">Lần cược gần nhất:</span>
+                                <div class="realtime-value-group">
+                                    <span class="realtime-value" id="lastBetAmount">-</span>
+                                    <span class="realtime-subvalue" id="lastBetEid">-</span>
+                                </div>
+                            </div>
+                            <div class="realtime-item">
+                                <span class="realtime-label">Lần cược tiếp theo:</span>
+                                <span class="realtime-value" id="nextBetAmount">-</span>
+                            </div>
+                            <div class="realtime-item">
+                                <span class="realtime-label">Kết quả vừa rồi:</span>
+                                <div class="realtime-value-group">
+                                    <span class="result-badge" id="lastResult">-</span>
+                                    <span class="outcome-badge" id="lastOutcome">-</span>
+                                </div>
+                            </div>
+                            <div class="realtime-item">
+                                <span class="realtime-label">Vòng cược:</span>
+                                <span class="realtime-value" id="roundCounter">0/4</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Advanced Stats -->
+                    <div class="advanced-stats">
+                        <h3>📈 Thống kê nâng cao</h3>
+                        <div class="advanced-grid">
+                            <div class="advanced-item">
+                                <span class="advanced-label">Tổng tiền thắng:</span>
+                                <span class="advanced-value success" id="totalWinAmount">0</span>
+                            </div>
+                            <div class="advanced-item">
+                                <span class="advanced-label">Tổng tiền thua:</span>
+                                <span class="advanced-value error" id="totalLossAmount">0</span>
+                            </div>
+                            <div class="advanced-item">
+                                <span class="advanced-label">Thắng liên tiếp (hiện tại):</span>
+                                <span class="advanced-value" id="currentWinStreak">0</span>
+                            </div>
+                            <div class="advanced-item">
+                                <span class="advanced-label">Thua liên tiếp (hiện tại):</span>
+                                <span class="advanced-value" id="currentLossStreak">0</span>
+                            </div>
+                            <div class="advanced-item">
+                                <span class="advanced-label">Thắng liên tiếp (tối đa):</span>
+                                <span class="advanced-value success" id="maxWinStreak">0</span>
+                            </div>
+                            <div class="advanced-item">
+                                <span class="advanced-label">Thua liên tiếp (tối đa):</span>
+                                <span class="advanced-value error" id="maxLossStreak">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stop Button -->
+                    <div class="betting-controls">
+                        <button id="stopBettingBtn" class="btn btn-danger btn-large">
+                            🛑 DỪNG CHƯƠNG TRÌNH
+                        </button>
+                        <button id="resetStatsBtn" class="btn btn-warning">
+                            🔄 Reset Thống Kê
+                        </button>
+                    </div>
+                    
+                    <!-- Betting History -->
+                    <div class="betting-history">
+                        <h3>📜 Lịch sử cược gần đây</h3>
+                        <div id="bettingHistory" class="history-list">
+                            <div class="history-empty">Chưa có cược nào</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="controls">
             <button id="clearLogsBtn" class="btn btn-danger">🗑️ Clear Logs</button>

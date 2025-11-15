@@ -12,8 +12,9 @@ const path = require('path');
  * @param {Page} page - Puppeteer page object
  * @param {string} templatesDir - Thư mục chứa template images
  * @param {Object} logger - Logger object
+ * @param {Object} options - Options { baseBetAmount, initialBalance }
  */
-async function joinGameXoc(page, templatesDir, logger) {
+async function joinGameXoc(page, templatesDir, logger, options = {}) {
   try {
     logger && logger.log && logger.log('🎮 Bắt đầu vào game...');
     // Dọn dẹp popup
@@ -118,7 +119,7 @@ async function joinGameXoc(page, templatesDir, logger) {
 
     // BƯỚC 7: Click vào game PHỤNG
     logger && logger.log && logger.log('\n--- BƯỚC 7: Tìm game "PHỤNG" ---');
-    await clickPhungGame(page, templatesDir, templatesMap, logger);
+    await clickPhungGame(page, templatesDir, templatesMap, logger, options);
 
     logger && logger.log && logger.log('\n========================================');
     logger && logger.log && logger.log('   JOIN GAME XOC FLOW - COMPLETED');
@@ -149,7 +150,6 @@ async function handleInitialPopups(page, templatesDir, logger) {
 
   // Chờ một chút để popup có thời gian xuất hiện
   logger && logger.log && logger.log('⏳ Chờ popup xuất hiện...');
-  await page.waitForTimeout(2000);
 
   while (checks < maxChecks) {
     checks++;
@@ -202,8 +202,9 @@ async function handleInitialPopups(page, templatesDir, logger) {
  * @param {string} templatesDir
  * @param {Object} templatesMap
  * @param {Object} logger 
+ * @param {Object} options - Options { baseBetAmount, initialBalance }
  */
-async function clickPhungGame(page, templatesDir, templatesMap, logger) {
+async function clickPhungGame(page, templatesDir, templatesMap, logger, options = {}) {
   try {
     const cfg = require('../config/config');
     
@@ -297,6 +298,13 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger) {
 
     await page.waitForTimeout(5000); // Chờ 5s để vào sảnh
     logger && logger.log && logger.log('\n✓ HOÀN TẤT QUY TRÌNH VÀO GAME PHỤNG');
+    
+    // Start real-time statistics broadcasting (non-blocking)
+    startRealtimeStats(page, logger);
+    
+    logger && logger.log && logger.log('📊 Thống kê real-time đang chạy trong nền (cập nhật mỗi 3 giây)...');
+    logger && logger.log && logger.log('💡 Kiểm tra console để xem Bank status, Streak, Betting info');
+    logger && logger.log && logger.log('✓ Flow tiếp tục mà không bị block...');
 
   } catch (error) {
     logger && logger.error && logger.error('!!! Lỗi khi click vào "PHỤNG" !!!');
@@ -354,8 +362,78 @@ function buildTemplatesMap(templatesDir) {
   return templatesMap;
 }
 
+/**
+ * Start real-time statistics broadcasting (non-blocking)
+ * @param {Page} page 
+ * @param {Object} logger 
+ */
+function startRealtimeStats(page, logger) {
+  // Start interval in browser context - runs independently
+  page.evaluate(() => {
+    if (window.statsIntervalId) {
+      clearInterval(window.statsIntervalId);
+    }
+    
+    window.statsIntervalId = setInterval(() => {
+      // Check stop flag
+      if (window.stopAutomation) {
+        clearInterval(window.statsIntervalId);
+        console.log('📊 [STATS] Stopped by stopAutomation flag');
+        return;
+      }
+      
+      // Gather statistics
+      const stats = {
+        timestamp: new Date().toISOString(),
+        bankStatus: {
+          L2: window.mySetCount_L2 || 0,
+          L3: window.mySetCount_L3 || 0,
+          L4: window.mySetCount_L4 || 0,
+          L5: window.mySetCount_L5 || 0,
+          L6: window.mySetCount_L6 || 0
+        },
+        currentStreak: {
+          type: window.myCurrentStreakType,
+          count: window.myCurrentStreakCount || 0
+        },
+        betting: {
+          baseBet: window.myBaseBetAmount || 500,
+          currentBet: window.myCurrentBetAmount || 500,
+          lastBetEid: window.myLastBetEid,
+          isWaitingResult: window.isWaitingForResult || false,
+          isWaitingFixedBet: window.isWaitingForFixedBet || false,
+          roundCounter: window.myRoundCounter || 0
+        },
+        room: {
+          bestRid: window.myBestRid
+        }
+      };
+      
+      // Log to browser console
+      const bankStr = `L2:${stats.bankStatus.L2} L3:${stats.bankStatus.L3} L4:${stats.bankStatus.L4} L5:${stats.bankStatus.L5} L6:${stats.bankStatus.L6}`;
+      const streakStr = stats.currentStreak.type ? `${stats.currentStreak.type}x${stats.currentStreak.count}` : 'None';
+      const betStr = `${stats.betting.currentBet}đ (${stats.betting.roundCounter}/4 rounds)`;
+      
+      console.log(`📊 [${new Date().toLocaleTimeString()}] Bank: ${bankStr} | Streak: ${streakStr} | Bet: ${betStr} | Room: ${stats.room.bestRid || 'N/A'}`);
+      
+      // Try to send to server if available
+      if (typeof window.sendStatsToServer === 'function') {
+        window.sendStatsToServer(stats);
+      }
+    }, 5000); // Every 5 seconds
+
+    console.log('📊 [STATS] Real-time statistics started (interval: 5s)');
+  }).catch(error => {
+    logger && logger.error && logger.error('Failed to start real-time stats:', error.message);
+  });
+  
+  // Function returns immediately - non-blocking
+  logger && logger.log && logger.log('✓ Real-time stats interval started in browser context');
+}
+
 module.exports = {
   joinGameXoc,
   handleInitialPopups,
-  clickPhungGame
+  clickPhungGame,
+  startRealtimeStats
 };

@@ -41,6 +41,8 @@ app.post('/api/v1/login', async (req, res) => {
     // support both raw JSON body and urlencoded JSON string in `payload`
     const loginRequest = req.body || {};
     console.log('Received /api/v1/login payload:', loginRequest);
+    console.log('📊 baseBetAmount from request:', loginRequest.baseBetAmount, 'type:', typeof loginRequest.baseBetAmount);
+    console.log('📊 initialBalance from request:', loginRequest.initialBalance, 'type:', typeof loginRequest.initialBalance);
 
     const payload = {
       url: loginRequest.url || 'https://v.hit.club/',
@@ -48,11 +50,16 @@ app.post('/api/v1/login', async (req, res) => {
       actions: loginRequest.actions || [],
       joinGameXoc: loginRequest.joinGameXoc !== undefined ? loginRequest.joinGameXoc : true, // Default to true
       enableWebSocketHook: loginRequest.enableWebSocketHook !== undefined ? loginRequest.enableWebSocketHook : true, // Default to true
+      baseBetAmount: parseInt(loginRequest.baseBetAmount) || 500, // Convert to number and default 500
+      initialBalance: parseInt(loginRequest.initialBalance) || 0, // Convert to number and default 0
       proxyHost: loginRequest.proxyHost,
       proxyPort: loginRequest.proxyPort,
       proxyUser: loginRequest.proxyUser,
       proxyPassword: loginRequest.proxyPass
     };
+    
+    console.log('📦 Final payload baseBetAmount:', payload.baseBetAmount, 'type:', typeof payload.baseBetAmount);
+    console.log('📦 Final payload initialBalance:', payload.initialBalance, 'type:', typeof payload.initialBalance);
 
     // fire-and-forget: run automation asynchronously. Avoid printing full result to console.
     runAutomation(payload, [])
@@ -88,6 +95,30 @@ wss.on('connection', (ws) => {
     level: 'info',
     message: 'Connected to Puppeteer Automation Server'
   }));
+  
+  // Handle incoming messages from client
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      
+      // Handle stop automation command
+      if (message.type === 'stop-automation') {
+        console.log('⛔ Received STOP command from client');
+        
+        // Set global flag to stop automation
+        global.stopAutomationFlag = true;
+        
+        // Broadcast to all clients
+        broadcast({
+          type: 'log',
+          level: 'warning',
+          message: '🛑 Đã nhận lệnh DỪNG từ client. Automation sẽ dừng sau khi hoàn thành tác vụ hiện tại.'
+        });
+      }
+    } catch (err) {
+      console.error('Error parsing WebSocket message:', err.message);
+    }
+  });
   
   ws.on('close', () => {
     console.log('WebSocket client disconnected');

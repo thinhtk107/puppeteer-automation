@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const { performFullLoginViaImages } = require('./flows/login_flow');
-const { setupWebSocketHook, listenForWebSocketCreation, getWebSocketState } = require('./websocket/websocket_hook');
+const { setupWebSocketHook, listenForWebSocketCreation } = require('./websocket/websocket_hook');
 const { cleanupAllTempFiles } = require('./helpers/cleanup_helper');
 
 /**
@@ -117,6 +117,52 @@ async function runAutomation(payload, uploadedFiles) {
     try {
       const text = msg.text();
       
+      // === HANDLE BETTING EVENTS ===
+      if (text.startsWith('[BET_EVENT]')) {
+        try {
+          const jsonStr = text.substring('[BET_EVENT]'.length);
+          const betEvent = JSON.parse(jsonStr);
+          
+          // Broadcast to WebSocket clients
+          if (global.broadcastToClients) {
+            global.broadcastToClients({
+              type: 'betting-event',
+              ...betEvent
+            });
+          }
+          
+          logger.log(`📊 Betting Event: ${betEvent.event} | EID: ${betEvent.eid} | Amount: ${betEvent.amount}`);
+          return; // Don't log the raw [BET_EVENT] message
+        } catch (parseErr) {
+          logger.error('Failed to parse betting event:', parseErr.message);
+        }
+      }
+      
+      // === HANDLE BETTING STATISTICS (REAL-TIME) ===
+      if (text.startsWith('[BETTING_STATS]')) {
+        try {
+          const jsonStr = text.substring('[BETTING_STATS]'.length);
+          const statsData = JSON.parse(jsonStr);
+          
+          logger.log(`📊 Parsed betting stats: Balance=${statsData.currentBalance}, Bets=${statsData.totalBets}, Wins=${statsData.winCount}`);
+          
+          // Broadcast to WebSocket clients
+          if (global.broadcastToClients) {
+            global.broadcastToClients({
+              type: 'betting-stats',
+              ...statsData
+            });
+            logger.log('✅ Broadcasted betting stats to clients');
+          } else {
+            logger.warn('⚠️ global.broadcastToClients not available');
+          }
+          
+          return; // Don't log the raw stats message
+        } catch (parseErr) {
+          logger.error('Failed to parse betting statistics:', parseErr.message);
+        }
+      }
+      
       // Bỏ qua log từ WebSocket hook
       if (text.includes('SOCKET') || text.includes('WebSocket') || text.includes('hook')) {
         return;
@@ -156,8 +202,9 @@ async function runAutomation(payload, uploadedFiles) {
       // Setup CDP listener for WebSocket creation events
       await listenForWebSocketCreation(page, logger);
       
-      // Inject WebSocket hook script before page loads
-      await setupWebSocketHook(page, logger);
+      // Inject WebSocket hook script before page loads with baseBet from payload
+      const baseBet = payload.baseBetAmount || 500; // Lấy từ form hoặc default 500
+      await setupWebSocketHook(page, logger, { baseBet });
       
       logger.log('✓ WebSocket hook đã sẵn sàng\n');
     } catch (wsError) {
@@ -166,10 +213,13 @@ async function runAutomation(payload, uploadedFiles) {
   }
   
   // Navigate to URL
+  logger.log('🌐 Đang tải trang web...');
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  await page.waitForTimeout(2000);
   
-  // Wait for document ready
+  // ===== WAIT FOR PAGE FULLY LOADED =====
+  logger.log('⏳ Đợi trang web load hoàn toàn...');
+  
+  // 1. Wait for document ready state
   await page.evaluate(() => {
     return new Promise((resolve) => {
       if (document.readyState === 'complete') {
@@ -179,14 +229,50 @@ async function runAutomation(payload, uploadedFiles) {
       }
     });
   });
+  logger.log('  ✓ Document ready state: complete');
   
-  logger.log('✓ Trang web đã sẵn sàng');
+  // 2. Wait for lazy-loaded content
+  await page.waitForTimeout(2000);
   
-  // ===== CHECK WEBSOCKET STATE AFTER PAGE LOAD =====
+  // 3. Wait for canvas/game elements to be present (if applicable)
+  try {
+    await page.waitForFunction(
+      () => {
+        // Check if canvas exists (for game pages)
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+          return canvas.width > 0 && canvas.height > 0;
+        }
+        // For non-canvas pages, just check body is ready
+        return document.body && document.body.children.length > 0;
+      },
+      { timeout: 10000 }
+    );
+    logger.log('  ✓ Canvas/DOM elements đã sẵn sàng');
+  } catch (canvasErr) {
+    logger.warn('  ⚠️ Không tìm thấy canvas hoặc timeout, tiếp tục...');
+  }
+  
+  // 4. Wait for network to be completely idle
+  try {
+    await page.waitForNetworkIdle({ timeout: 10000, idleTime: 500 });
+    logger.log('  ✓ Network đã idle');
+  } catch (netErr) {
+    logger.warn('  ⚠️ Network không idle sau 10s, tiếp tục...');
+  }
+  
+  // 5. Additional wait for JavaScript execution and animations
+  await page.waitForTimeout(1500);
+  
+  logger.log('✓ Trang web đã load hoàn toàn');
+  
+  // ===== WAIT FOR WEBSOCKET TO BE CREATED =====
   if (payload.enableWebSocketHook !== false) {
     try {
-      await page.waitForTimeout(5000);
+      logger.log('🔌 Đợi WebSocket được tạo...');
       
+      // Get WebSocket state
+      const { getWebSocketState } = require('./websocket/websocket_hook');
       const wsState = await getWebSocketState(page, logger);
       
       if (wsState && wsState.exists) {
@@ -194,9 +280,15 @@ async function runAutomation(payload, uploadedFiles) {
         if (wsState.bestRid) {
           logger.log(`✓ Best Room ID: ${wsState.bestRid}`);
         }
+      } else if (wsState && wsState.timeout) {
+        logger.warn('⚠️ Timeout: WebSocket chưa được tạo sau 30s');
+        logger.warn('   Game có thể cần tương tác (click, login) để khởi tạo WebSocket');
+        logger.warn('   Tiếp tục thực hiện các bước tiếp theo...');
+      } else {
+        logger.warn('⚠️ WebSocket chưa được tạo');
       }
     } catch (wsCheckError) {
-      // Không cần log lỗi chi tiết
+      logger.warn('⚠️ Lỗi khi đợi WebSocket:', wsCheckError.message);
     }
   }
   
@@ -236,7 +328,64 @@ async function runAutomation(payload, uploadedFiles) {
 
   // If loginRequest provided, perform login flow
   if (payload.loginRequest) {
-    logger.log('runAutomation -> executing login flow');
+    logger.log('═══════════════════════════════════════════════════════');
+    logger.log('🔐 CHUẨN BỊ THỰC HIỆN LOGIN FLOW');
+    logger.log('═══════════════════════════════════════════════════════');
+    
+    // ===== FINAL VERIFICATION BEFORE LOGIN =====
+    logger.log('⏳ Chờ thêm để đảm bảo trang hoàn toàn ổn định...');
+    await page.waitForTimeout(3000);
+    
+    // Verify page is still responsive
+    try {
+      const readyState = await page.evaluate(() => document.readyState);
+      logger.log(`✓ Document readyState: ${readyState}`);
+      
+      if (readyState !== 'complete') {
+        logger.warn('⚠️ Document chưa hoàn toàn load, đợi thêm...');
+        await page.waitForTimeout(2000);
+      }
+    } catch (evalErr) {
+      logger.error('✗ Trang web không phản hồi:', evalErr.message);
+      throw new Error('Page is not responsive before login');
+    }
+    
+    // Check if any modal/popup is already visible
+    try {
+      const pageInfo = await page.evaluate(() => {
+        const modals = document.querySelectorAll('[class*="modal"], [class*="popup"], [class*="dialog"]');
+        const visibleModals = Array.from(modals).filter(m => {
+          const style = window.getComputedStyle(m);
+          return style.display !== 'none' && style.visibility !== 'hidden';
+        });
+        
+        return {
+          hasModal: visibleModals.length > 0,
+          modalCount: visibleModals.length,
+          bodyHeight: document.body.scrollHeight,
+          bodyChildren: document.body.children.length
+        };
+      });
+      
+      logger.log(`ℹ️ Thông tin trang: ${pageInfo.bodyChildren} elements, height: ${pageInfo.bodyHeight}px`);
+      
+      if (pageInfo.hasModal) {
+        logger.log(`ℹ️ Phát hiện ${pageInfo.modalCount} modal/popup đang mở`);
+      } else {
+        logger.log('✓ Không có modal/popup nào đang mở');
+      }
+    } catch (modalCheckErr) {
+      logger.warn('⚠️ Không thể kiểm tra modal:', modalCheckErr.message);
+    }
+    
+    // Final wait for any remaining animations/transitions
+    logger.log('⏳ Chờ animations/transitions hoàn tất...');
+    await page.waitForTimeout(1500);
+    
+    logger.log('═══════════════════════════════════════════════════════');
+    logger.log('🚀 BẮT ĐẦU LOGIN FLOW');
+    logger.log('═══════════════════════════════════════════════════════');
+    
     const loginRes = await performFullLoginViaImages(page, templatesMap, templatesDir, payload.loginRequest, logger);
     results.push({ flow: 'login', result: loginRes });
     
@@ -260,7 +409,7 @@ async function runAutomation(payload, uploadedFiles) {
         try {
           logger.log('Verifying login popup is closed...');
           const { waitForTemplate } = require('./helpers/matcher_helper');
-          const cfg = require('./config');
+          const cfg = require('./config/config');
           
           const popupStillVisible = await new Promise((resolve) => {
             waitForTemplate(
@@ -297,13 +446,45 @@ async function runAutomation(payload, uploadedFiles) {
           // Continue anyway
         }
         
+        // Check WebSocket after login (if not created during initial page load)
+        if (payload.enableWebSocketHook !== false) {
+          try {
+            logger.log('🔌 Kiểm tra WebSocket sau login...');
+            const { getWebSocketState } = require('./websocket/websocket_hook');
+            const wsStateAfterLogin = await getWebSocketState(page, null);
+            
+            if (wsStateAfterLogin && wsStateAfterLogin.exists) {
+              logger.log(`✓ WebSocket: ${wsStateAfterLogin.readyStateText} - ${wsStateAfterLogin.url}`);
+              if (wsStateAfterLogin.bestRid) {
+                logger.log(`✓ Best Room ID: ${wsStateAfterLogin.bestRid}`);
+              }
+            } else {
+              logger.warn('⚠️ WebSocket vẫn chưa được tạo sau login');
+              logger.warn('   Có thể cần thêm tương tác để trigger WebSocket');
+            }
+          } catch (wsError) {
+            logger.warn('⚠️ Lỗi khi check WebSocket:', wsError.message);
+          }
+        }                
         // Now execute join game flow
         logger.log('Starting join game flow...');
         try {
           const { joinGameXoc } = require('./flows/join_game_flow');
           logger.log('✓ join_game_flow module loaded successfully');
           
-          await joinGameXoc(page, templatesDir, logger);
+          // Debug: Log payload values
+          logger.log(`📊 Payload baseBetAmount: ${payload.baseBetAmount} (type: ${typeof payload.baseBetAmount})`);
+          logger.log(`📊 Payload initialBalance: ${payload.initialBalance} (type: ${typeof payload.initialBalance})`);
+          
+          // Pass baseBetAmount and initialBalance to join game flow
+          const options = {
+            baseBetAmount: payload.baseBetAmount || 500,
+            initialBalance: payload.initialBalance || 0
+          };
+          
+          logger.log(`📦 Passing options to joinGameXoc:`, JSON.stringify(options));
+          
+          await joinGameXoc(page, templatesDir, logger, options);
           logger.log('✓ joinGameXoc completed successfully');
           results.push({ flow: 'joinGameXoc', status: 'success' });
         } catch (err) {
