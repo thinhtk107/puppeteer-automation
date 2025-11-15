@@ -43,6 +43,8 @@ app.post('/api/v1/login', async (req, res) => {
     console.log('Received /api/v1/login payload:', loginRequest);
     console.log('📊 baseBetAmount from request:', loginRequest.baseBetAmount, 'type:', typeof loginRequest.baseBetAmount);
     console.log('📊 initialBalance from request:', loginRequest.initialBalance, 'type:', typeof loginRequest.initialBalance);
+    console.log('👻 headlessMode from request:', loginRequest.headlessMode, 'type:', typeof loginRequest.headlessMode);
+    console.log('📊 showStatsOnScreen from request:', loginRequest.showStatsOnScreen, 'type:', typeof loginRequest.showStatsOnScreen);
 
     const payload = {
       url: loginRequest.url || 'https://v.hit.club/',
@@ -50,6 +52,8 @@ app.post('/api/v1/login', async (req, res) => {
       actions: loginRequest.actions || [],
       joinGameXoc: loginRequest.joinGameXoc !== undefined ? loginRequest.joinGameXoc : true, // Default to true
       enableWebSocketHook: loginRequest.enableWebSocketHook !== undefined ? loginRequest.enableWebSocketHook : true, // Default to true
+      showStatsOnScreen: loginRequest.showStatsOnScreen !== undefined ? loginRequest.showStatsOnScreen : true, // Default to true
+      headlessMode: loginRequest.headlessMode !== undefined ? loginRequest.headlessMode : true, // Default to true
       baseBetAmount: parseInt(loginRequest.baseBetAmount) || 500, // Convert to number and default 500
       initialBalance: parseInt(loginRequest.initialBalance) || 0, // Convert to number and default 0
       proxyHost: loginRequest.proxyHost,

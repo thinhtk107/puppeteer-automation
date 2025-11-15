@@ -1,37 +1,132 @@
 const puppeteer = require('puppeteer');
+const puppeteerCore = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+
+// ===== GOLOGIN DISABLED =====
+// GoLogin is ES Module - use dynamic import
+// let GoLogin = null;
+// ===== END GOLOGIN DISABLED =====
+
 const { performFullLoginViaImages } = require('./flows/login_flow');
 const { setupWebSocketHook, listenForWebSocketCreation } = require('./websocket/websocket_hook');
 const { cleanupAllTempFiles } = require('./helpers/cleanup_helper');
+const sessionManager = require('./session_manager');
+
+// ===== GOLOGIN DISABLED =====
+/**
+ * Load GoLogin dynamically (ESM module)
+ */
+/*
+async function loadGoLogin() {
+  if (!GoLogin) {
+    const goLoginModule = await import('gologin');
+    GoLogin = goLoginModule.default;
+  }
+  return GoLogin;
+}
+*/
+// ===== END GOLOGIN DISABLED =====
 
 /**
- * Main entrypoint kept similar: payload { url, actions, loginRequest, proxyHost, proxyPort }
+ * Tạo browser instance dựa trên config (GoLogin hoặc Puppeteer thường)
  */
-async function runAutomation(payload, uploadedFiles) {
-  const devVisible = process.env.DEV_VISIBLE === 'true' || process.env.HEADLESS === 'false';
-  
-  // ===== PROXY SETUP =====
-  // Build proxy address if provided
-  let proxyAddress = null;
-  if (payload.proxyHost && payload.proxyPort) {
-    proxyAddress = `${payload.proxyHost}:${payload.proxyPort}`;
-    console.log(`[PROXY] Using proxy: ${proxyAddress}`);
-  } else if (process.env.PROXY_HOST && process.env.PROXY_PORT) {
-    proxyAddress = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
-    console.log(`[PROXY] Using proxy from env: ${proxyAddress}`);
+async function createBrowserInstance(config, logger) {
+  // ===== GOLOGIN DISABLED - Comment out để tắt GoLogin =====
+  /*
+  // Nếu sử dụng GoLogin
+  if (config.useGoLogin && config.goLoginToken && config.goLoginProfileId) {
+    logger.log('🚀 Khởi động GoLogin browser...');
+    
+    try {
+      // Load GoLogin module dynamically
+      const GoLoginClass = await loadGoLogin();
+      
+      const GL = new GoLoginClass({
+        token: config.goLoginToken,
+        profile_id: config.goLoginProfileId,
+      });
+      
+      const { status, wsUrl } = await GL.start();
+      
+      if (status !== 'success' || !wsUrl) {
+        throw new Error('GoLogin start failed or no wsUrl');
+      }
+      
+      logger.log(`✓ GoLogin started, connecting to: ${wsUrl}`);
+      
+      const browser = await puppeteerCore.connect({
+        browserWSEndpoint: wsUrl,
+        ignoreHTTPSErrors: true,
+      });
+      
+      logger.log('✓ Browser connected via GoLogin');
+      
+      return { browser, goLoginInstance: GL, proxyAddress: null };
+    } catch (goLoginError) {
+      logger.error('✗ GoLogin error:', goLoginError.message);
+      logger.warn('⚠️ Fallback to regular Puppeteer...');
+    }
   }
   
-  // Build launch options with proxy support
+  // Nếu có WebSocket endpoint (GoLogin đã chạy sẵn)
+  if (config.goLoginWsEndpoint) {
+    logger.log('🔗 Connecting to existing browser via WebSocket...');
+    
+    try {
+      const browser = await puppeteerCore.connect({
+        browserWSEndpoint: config.goLoginWsEndpoint,
+        ignoreHTTPSErrors: true,
+      });
+      
+      logger.log('✓ Connected to existing browser');
+      return { browser, goLoginInstance: null, proxyAddress: null };
+    } catch (wsError) {
+      logger.error('✗ WebSocket connect error:', wsError.message);
+      logger.warn('⚠️ Fallback to regular Puppeteer...');
+    }
+  }
+  */
+  // ===== END GOLOGIN DISABLED =====
+  
+  // Fallback: Puppeteer thường
+  logger.log('🌐 Launching regular Puppeteer browser...');
+  
+  // Build proxy address if provided
+  let proxyAddress = null;
+  if (config.proxyHost && config.proxyPort) {
+    proxyAddress = `${config.proxyHost}:${config.proxyPort}`;
+    logger.log(`[PROXY] Using proxy: ${proxyAddress}`);
+  } else if (process.env.PROXY_HOST && process.env.PROXY_PORT) {
+    proxyAddress = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
+    logger.log(`[PROXY] Using proxy from env: ${proxyAddress}`);
+  }
+  
+  // Xác định headless mode (mặc định true nếu undefined)
+  const isHeadless = config.headless === undefined ? true : config.headless;
+  
+  // Log để debug
+  logger.log(`📋 Config headless value: ${config.headless} (type: ${typeof config.headless})`);
+  logger.log(`📋 Resolved isHeadless: ${isHeadless} (type: ${typeof isHeadless})`);
+  
   const launchOptions = {
-    headless: devVisible ? false : true,
+    headless: isHeadless ? 'new' : false, // Puppeteer v21+ sử dụng 'new' hoặc false
     args: [
       '--no-sandbox',
-      '--disable-setuid-sandbox',
-      devVisible ? '--start-maximized' : '--no-startup-window'
+      '--disable-setuid-sandbox'
     ],
-    dumpio: devVisible ? true : false
+    dumpio: !isHeadless,
+    devtools: !isHeadless // Mở DevTools khi visible
   };
+  
+  // Chỉ thêm start-maximized khi visible
+  if (!isHeadless) {
+    launchOptions.args.push('--start-maximized');
+  }
+  
+  logger.log(`🖥️ Browser mode: ${isHeadless ? 'HEADLESS (ngầm)' : 'VISIBLE (hiển thị)'}`);
+  logger.log(`📋 Headless option: ${launchOptions.headless}`);
+  logger.log(`📋 Launch args: ${launchOptions.args.join(', ')}`);
   
   // Add proxy argument if specified
   if (proxyAddress) {
@@ -39,17 +134,94 @@ async function runAutomation(payload, uploadedFiles) {
   }
   
   const browser = await puppeteer.launch(launchOptions);
+  logger.log('✓ Regular browser launched');
   
-  const page = await browser.newPage();
+  return { browser, goLoginInstance: null, proxyAddress };
+}
+
+/**
+ * Main entrypoint kept similar: payload { url, actions, loginRequest, proxyHost, proxyPort }
+ */
+async function runAutomation(payload, uploadedFiles) {
+  // Log payload để debug
+  console.log(`[DEBUG] payload.headlessMode: ${payload.headlessMode} (type: ${typeof payload.headlessMode})`);
+  
+  // LUÔN TẠO SESSION MỚI cho mỗi lần chạy automation
+  // Không dùng lại session cũ để tránh config cũ
+  const sessionId = sessionManager.createSession(
+    payload.userId || 'default-user',
+    {
+      url: payload.url,
+      username: payload.loginRequest?.username,
+      password: payload.loginRequest?.password,
+      baseBet: payload.baseBetAmount || 500,
+      useGoLogin: payload.useGoLogin || false,
+      goLoginToken: payload.goLoginToken || '',
+      goLoginProfileId: payload.goLoginProfileId || '',
+      goLoginWsEndpoint: payload.goLoginWsEndpoint || '',
+      proxyHost: payload.proxyHost,
+      proxyPort: payload.proxyPort
+    }
+  );
+  
+  console.log(`[Session ${sessionId}] 📝 Created new session`);
+  
+  const session = sessionManager.getSession(sessionId);
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+  
+  // Update session status
+  sessionManager.updateSession(sessionId, { status: 'running' });
+  
+  let browser = null;
+  let goLoginInstance = null;
+  let page = null;
+  let proxyAddress = null;
+  
+  try {
+    const devVisible = process.env.DEV_VISIBLE === 'true' || process.env.HEADLESS === 'false';
+    
+    // Log để debug
+    console.log(`[Session ${sessionId}] 🔍 DEBUG payload.headlessMode:`, payload.headlessMode, typeof payload.headlessMode);
+    
+    // Create browser instance (GoLogin or regular Puppeteer)
+    // Pass headlessMode directly from payload, not from session config
+    const browserConfig = {
+      ...session.config,
+      headless: payload.headlessMode === undefined ? true : payload.headlessMode // Lấy trực tiếp từ payload
+    };
+    
+    console.log(`[Session ${sessionId}] 🔍 DEBUG browserConfig.headless:`, browserConfig.headless, typeof browserConfig.headless);
+    
+    const browserResult = await createBrowserInstance(browserConfig, {
+      log: (...args) => console.log(`[Session ${sessionId}]`, ...args),
+      warn: (...args) => console.warn(`[Session ${sessionId}]`, ...args),
+      error: (...args) => console.error(`[Session ${sessionId}]`, ...args)
+    });
+    
+    browser = browserResult.browser;
+    goLoginInstance = browserResult.goLoginInstance;
+    proxyAddress = browserResult.proxyAddress;
+    
+    // Save browser instance to session
+    sessionManager.updateSession(sessionId, { 
+      browser, 
+      goLoginInstance 
+    });
+    
+    page = await browser.newPage();
+    
+    // Save page to session
+    sessionManager.updateSession(sessionId, { page });
+  
   // use a normal windowed viewport for predictable matching and debugging
   // avoid relying on window.screen which can force a fullscreen feeling; pick a sensible default
   await page.setViewport({ width: 1280, height: 800 });
   
-  // Helper function to broadcast messages to WebSocket clients
+  // Helper function to broadcast messages to WebSocket clients FOR THIS SESSION
   const broadcast = (data) => {
-    if (global.broadcastToClients) {
-      global.broadcastToClients(data);
-    }
+    sessionManager.broadcastToSession(sessionId, data);
   };
   
   // Broadcast automation start
@@ -59,20 +231,20 @@ async function runAutomation(payload, uploadedFiles) {
   const logger = {
     steps: [],
     log: (...args) => { 
-      const message = args.join(' ');
-      console.log(...args); 
+      const message = `[Session ${sessionId}] ${args.join(' ')}`;
+      console.log(message); 
       logger.steps.push({ level: 'info', text: message });
       broadcast({ type: 'log', level: 'info', message, timestamp: new Date().toISOString() });
     },
     warn: (...args) => { 
-      const message = args.join(' ');
-      console.warn(...args); 
+      const message = `[Session ${sessionId}] ${args.join(' ')}`;
+      console.warn(message); 
       logger.steps.push({ level: 'warn', text: message });
       broadcast({ type: 'log', level: 'warn', message, timestamp: new Date().toISOString() });
     },
     error: (...args) => { 
-      const message = args.join(' ');
-      console.error(...args); 
+      const message = `[Session ${sessionId}] ${args.join(' ')}`;
+      console.error(message); 
       logger.steps.push({ level: 'error', text: message });
       broadcast({ type: 'log', level: 'error', message, timestamp: new Date().toISOString() });
     }
@@ -116,6 +288,42 @@ async function runAutomation(payload, uploadedFiles) {
   page.on('console', msg => {
     try {
       const text = msg.text();
+      
+      // === DETECT ROOM EXIT ERROR AND RE-JOIN ===
+      if (text.includes("Can't find letter definition") || text.includes("myriadpro.png")) {
+        logger.warn('⚠️ Phát hiện lỗi thoát khỏi phòng! Đang vào lại game...');
+        
+        // Trigger re-join game asynchronously
+        (async () => {
+          try {
+            await page.waitForTimeout(2000); // Đợi 2s cho ổn định
+            
+            logger.log('🎮 Đang click vào game phụng để vào lại...');
+            const { clickPhungGame } = require('./flows/join_game_flow');
+            const templatesDir = path.join(__dirname, '..', 'uploads');
+            
+            // Build templates map from resources
+            const resourcesDir = path.join(__dirname, '..', 'resources');
+            const templatesMap = {};
+            if (fs.existsSync(resourcesDir)) {
+              for (const fn of fs.readdirSync(resourcesDir)) {
+                templatesMap[fn] = path.join(resourcesDir, fn);
+              }
+            }
+            
+            // Just click Phung game to rejoin the room
+            await clickPhungGame(page, templatesDir, templatesMap, logger, {
+              baseBetAmount: payload.baseBetAmount || 500
+            });
+            
+            logger.log('✅ Đã click vào game phụng thành công!');
+          } catch (rejoinErr) {
+            logger.error('❌ Lỗi khi vào lại game:', rejoinErr.message);
+          }
+        })();
+        
+        return; // Don't log the error details
+      }
       
       // === HANDLE BETTING EVENTS ===
       if (text.startsWith('[BET_EVENT]')) {
@@ -202,9 +410,10 @@ async function runAutomation(payload, uploadedFiles) {
       // Setup CDP listener for WebSocket creation events
       await listenForWebSocketCreation(page, logger);
       
-      // Inject WebSocket hook script before page loads with baseBet from payload
+      // Inject WebSocket hook script before page loads with baseBet, sessionId, and showStatsOnScreen
       const baseBet = payload.baseBetAmount || 500; // Lấy từ form hoặc default 500
-      await setupWebSocketHook(page, logger, { baseBet });
+      const showStatsOnScreen = payload.showStatsOnScreen !== false; // Default true
+      await setupWebSocketHook(page, logger, { baseBet, sessionId, showStatsOnScreen });
       
       logger.log('✓ WebSocket hook đã sẵn sàng\n');
     } catch (wsError) {
@@ -273,7 +482,7 @@ async function runAutomation(payload, uploadedFiles) {
       
       // Get WebSocket state
       const { getWebSocketState } = require('./websocket/websocket_hook');
-      const wsState = await getWebSocketState(page, logger);
+      const wsState = await getWebSocketState(page, logger, sessionId);
       
       if (wsState && wsState.exists) {
         logger.log(`✓ WebSocket: ${wsState.readyStateText} - ${wsState.url}`);
@@ -451,7 +660,7 @@ async function runAutomation(payload, uploadedFiles) {
           try {
             logger.log('🔌 Kiểm tra WebSocket sau login...');
             const { getWebSocketState } = require('./websocket/websocket_hook');
-            const wsStateAfterLogin = await getWebSocketState(page, null);
+            const wsStateAfterLogin = await getWebSocketState(page, logger, sessionId);
             
             if (wsStateAfterLogin && wsStateAfterLogin.exists) {
               logger.log(`✓ WebSocket: ${wsStateAfterLogin.readyStateText} - ${wsStateAfterLogin.url}`);
@@ -541,22 +750,45 @@ async function runAutomation(payload, uploadedFiles) {
   }
 
   logger.log('runAutomation -> finished, keepBrowser=', keepBrowser);
+  
+  // Update session status
+  sessionManager.updateSession(sessionId, { status: 'idle' });
+  
   if (!keepBrowser) {
-    await browser.close();
-    logger.log('Browser closed');
+    // Clean up session completely
+    await sessionManager.deleteSession(sessionId);
+    logger.log('Browser closed and session deleted');
   } else {
     logger.log('Browser kept open for inspection.');
   }
   
   // Broadcast automation complete
-  if (global.broadcastToClients) {
-    global.broadcastToClients({ 
-      type: 'automation-complete', 
-      timestamp: new Date().toISOString() 
-    });
-  }
+  broadcast({ 
+    type: 'automation-complete', 
+    timestamp: new Date().toISOString() 
+  });
   
-  return { results, logs: logger.steps };
+  return { results, logs: logger.steps, sessionId };
+  
+  } catch (error) {
+    // Update session with error status
+    console.error(`[Session ${sessionId}] Fatal error:`, error);
+    sessionManager.updateSession(sessionId, { 
+      status: 'error',
+      error: error.message 
+    });
+    
+    // Try to clean up resources
+    try {
+      if (page) await page.close().catch(() => {});
+      if (goLoginInstance) await goLoginInstance.stop().catch(() => {});
+      else if (browser) await browser.close().catch(() => {});
+    } catch (cleanupError) {
+      console.error(`[Session ${sessionId}] Cleanup error:`, cleanupError.message);
+    }
+    
+    throw error;
+  }
 }
 
 module.exports = { runAutomation };

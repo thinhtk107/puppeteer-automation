@@ -63,15 +63,29 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
 
     checkTimeout();
     
-    // captcha - Không retry, chỉ thử 1 lần
+    // captcha - Retry khi sai (kiểm tra bằng taigame.png)
     logStep('Bắt đầu xử lý CAPTCHA');
     
-    const ccoords = await waitForTemplate(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
+    const maxCaptchaRetries = 3; // Số lần retry tối đa
+    let captchaAttempt = 0;
+    let loginSuccess = false;
     
-    if (!ccoords) {
-      results.push({ step: 'typeCaptcha', status: 'skipped', error: 'captcha field not found' });
-      logger && logger.log && logger.log('⚠️ Bỏ qua CAPTCHA (không bắt buộc)');
-    } else {
+    while (captchaAttempt < maxCaptchaRetries && !loginSuccess) {
+      captchaAttempt++;
+      
+      if (captchaAttempt > 1) {
+        logger && logger.log && logger.log(`🔄 Retry CAPTCHA lần ${captchaAttempt}/${maxCaptchaRetries}...`);
+      }
+      
+      const ccoords = await waitForTemplate(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
+      
+      if (!ccoords) {
+        results.push({ step: 'typeCaptcha', status: 'skipped', error: 'captcha field not found' });
+        logger && logger.log && logger.log('⚠️ Bỏ qua CAPTCHA (không bắt buộc)');
+        loginSuccess = true; // Không có captcha = bỏ qua
+        break;
+      }
+      
       // Đọc CAPTCHA
       let captchaText = '';
       try {
@@ -93,14 +107,16 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
           step: 'typeCaptcha', 
           status: 'ok', 
           coords: ccoords, 
-          captcha: captchaText
+          captcha: captchaText,
+          attempt: captchaAttempt
         });
       } else {
         results.push({ 
           step: 'typeCaptcha', 
           status: 'failed', 
           error: 'Không đọc được CAPTCHA', 
-          coords: ccoords
+          coords: ccoords,
+          attempt: captchaAttempt
         });
         logger && logger.warn && logger.warn('   ✗ CAPTCHA trống');
       }
@@ -111,7 +127,50 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
       
       logStep('Nhấn nút xác nhận đăng nhập');
       await clickAbsolute(page, finalCoords.x, finalCoords.y, logger);
-      await page.waitForTimeout(cfg.FINAL_CLICK_WAIT_MS);
+      await page.waitForTimeout(3000); // Chờ response từ server
+      
+      // Kiểm tra đăng nhập thành công bằng cách xem popup có biến mất không
+      logger && logger.log && logger.log('🔍 Kiểm tra đăng nhập thành công...');
+      
+      // Nếu popup đăng nhập vẫn còn = đăng nhập thất bại
+      const popupStillExists = await waitForTemplate(page, templatesMap, templatesDir, 'login_popup_title.png', 2000, cfg.TEMPLATE_INTERVAL_MS, logger);
+      
+      if (!popupStillExists) {
+        // Popup đã biến mất = Đăng nhập thành công
+        logger && logger.log && logger.log('✅ Đăng nhập THÀNH CÔNG (popup đã đóng)');
+        loginSuccess = true;
+        results.push({ 
+          step: 'loginVerification', 
+          status: 'success', 
+          message: 'Popup đã đóng',
+          attempt: captchaAttempt
+        });
+      } else {
+        // Popup vẫn còn = Đăng nhập thất bại (captcha sai)
+        logger && logger.warn && logger.warn(`❌ Đăng nhập THẤT BẠI (popup vẫn còn) - Captcha sai?`);
+        
+        if (captchaAttempt < maxCaptchaRetries) {
+          // Refresh captcha và thử lại
+          logger && logger.log && logger.log('🔄 Refresh captcha và thử lại...');
+          
+          // Tìm nút refresh captcha
+          const refreshCoords = await waitForTemplate(page, templatesMap, templatesDir, 'refresh.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
+          if (refreshCoords) {
+            await clickAbsolute(page, refreshCoords.x, refreshCoords.y, logger);
+            await page.waitForTimeout(1500); // Chờ captcha mới load
+            logger && logger.log && logger.log('   ✓ Đã refresh captcha');
+          } else {
+            logger && logger.warn && logger.warn('   ⚠️ Không tìm thấy nút refresh');
+          }
+        } else {
+          logger && logger.error && logger.error(`❌ Đã thử ${maxCaptchaRetries} lần nhưng vẫn thất bại`);
+          results.push({ 
+            step: 'loginVerification', 
+            status: 'failed', 
+            error: 'Captcha sai sau ' + maxCaptchaRetries + ' lần thử'
+          });
+        }
+      }
     }
     
     logger && logger.log && logger.log('========================================');
