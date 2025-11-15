@@ -1043,6 +1043,150 @@ function handleRealTimeStats(data) {
         }
     }
     
+    // Update Current Balance
+    if (stats.currentBalance !== undefined) {
+        const currentBalanceEl = document.getElementById('currentBalance');
+        if (currentBalanceEl) {
+            currentBalanceEl.textContent = stats.currentBalance.toLocaleString() + 'đ';
+            
+            // Add flash animation
+            currentBalanceEl.classList.add('flash-animation');
+            setTimeout(() => currentBalanceEl.classList.remove('flash-animation'), 500);
+        }
+    }
+    
+    // Update Betting Statistics (Total, Wins, Losses)
+    if (stats.totalBetsPlaced !== undefined) {
+        const totalBetsEl = document.getElementById('totalBets');
+        if (totalBetsEl) {
+            totalBetsEl.textContent = stats.totalBetsPlaced;
+        }
+    }
+    
+    if (stats.totalWins !== undefined) {
+        const totalWinsEl = document.getElementById('winCount');
+        if (totalWinsEl) {
+            totalWinsEl.textContent = stats.totalWins;
+        }
+    }
+    
+    if (stats.totalLosses !== undefined) {
+        const totalLossesEl = document.getElementById('lossCount');
+        if (totalLossesEl) {
+            totalLossesEl.textContent = stats.totalLosses;
+        }
+    }
+    
+    // Calculate and update win rate
+    if (stats.totalBetsPlaced !== undefined && stats.totalWins !== undefined) {
+        const winRateEl = document.getElementById('winRate');
+        if (winRateEl && stats.totalBetsPlaced > 0) {
+            const winRate = ((stats.totalWins / stats.totalBetsPlaced) * 100).toFixed(1);
+            winRateEl.textContent = winRate + '%';
+        }
+    }
+    
+    // Update Advanced Statistics
+    if (stats.totalWinAmount !== undefined) {
+        const totalWinAmountEl = document.getElementById('totalWinAmount');
+        if (totalWinAmountEl) {
+            totalWinAmountEl.textContent = stats.totalWinAmount.toLocaleString() + 'đ';
+        }
+    }
+    
+    if (stats.totalLossAmount !== undefined) {
+        const totalLossAmountEl = document.getElementById('totalLossAmount');
+        if (totalLossAmountEl) {
+            totalLossAmountEl.textContent = stats.totalLossAmount.toLocaleString() + 'đ';
+        }
+    }
+    
+    if (stats.currentWinStreak !== undefined) {
+        const currentWinStreakEl = document.getElementById('currentWinStreak');
+        if (currentWinStreakEl) {
+            currentWinStreakEl.textContent = stats.currentWinStreak;
+            // Highlight if streak > 0
+            if (stats.currentWinStreak > 0) {
+                currentWinStreakEl.classList.add('streak-active');
+            } else {
+                currentWinStreakEl.classList.remove('streak-active');
+            }
+        }
+    }
+    
+    if (stats.currentLossStreak !== undefined) {
+        const currentLossStreakEl = document.getElementById('currentLossStreak');
+        if (currentLossStreakEl) {
+            currentLossStreakEl.textContent = stats.currentLossStreak;
+            // Highlight if streak > 0
+            if (stats.currentLossStreak > 0) {
+                currentLossStreakEl.classList.add('loss-streak-active');
+            } else {
+                currentLossStreakEl.classList.remove('loss-streak-active');
+            }
+        }
+    }
+    
+    // Update max streaks (we need to track these separately on client side)
+    if (stats.currentWinStreak !== undefined) {
+        const maxWinStreakEl = document.getElementById('maxWinStreak');
+        if (maxWinStreakEl) {
+            const currentMax = parseInt(maxWinStreakEl.textContent) || 0;
+            if (stats.currentWinStreak > currentMax) {
+                maxWinStreakEl.textContent = stats.currentWinStreak;
+            }
+        }
+    }
+    
+    if (stats.currentLossStreak !== undefined) {
+        const maxLossStreakEl = document.getElementById('maxLossStreak');
+        if (maxLossStreakEl) {
+            const currentMax = parseInt(maxLossStreakEl.textContent) || 0;
+            if (stats.currentLossStreak > currentMax) {
+                maxLossStreakEl.textContent = stats.currentLossStreak;
+            }
+        }
+    }
+    
+    // Update Highest Bet
+    if (stats.nextBetAmount !== undefined) {
+        const highestBetEl = document.getElementById('highestBet');
+        if (highestBetEl) {
+            const currentHighest = parseInt(highestBetEl.textContent.replace(/[^\d]/g, '')) || 0;
+            if (stats.nextBetAmount > currentHighest) {
+                highestBetEl.textContent = stats.nextBetAmount.toLocaleString() + 'đ';
+            }
+        }
+    }
+    
+    // Update Profit (Total Win - Total Loss)
+    if (stats.totalWinAmount !== undefined && stats.totalLossAmount !== undefined) {
+        const totalProfitEl = document.getElementById('totalProfit');
+        if (totalProfitEl) {
+            const profit = stats.totalWinAmount - stats.totalLossAmount;
+            totalProfitEl.textContent = profit.toLocaleString() + 'đ';
+            
+            // Color code based on profit/loss
+            totalProfitEl.className = 'stat-value';
+            if (profit > 0) {
+                totalProfitEl.classList.add('success');
+            } else if (profit < 0) {
+                totalProfitEl.classList.add('error');
+            }
+        }
+    }
+    
+    // Update Betting History
+    if (stats.lastBet && stats.lastOutcome) {
+        addToBettingHistory({
+            time: new Date().toLocaleTimeString(),
+            eid: stats.lastBet.eid,
+            amount: stats.lastBet.amount,
+            result: stats.lastOutcome,
+            balance: stats.currentBalance || 0
+        });
+    }
+    
     // Add to statistics history (optional)
     addStatsToHistory(stats);
 }
@@ -1075,6 +1219,48 @@ function highlightActiveBank(bankStatus) {
 function addStatsToHistory(stats) {
     // Implement history tracking if needed
     // Can be used for charts or analysis
+}
+
+// Add betting entry to history display
+function addToBettingHistory(bet) {
+    const historyContainer = document.getElementById('bettingHistory');
+    if (!historyContainer) return;
+    
+    // Remove empty message if exists
+    const emptyMsg = historyContainer.querySelector('.history-empty');
+    if (emptyMsg) {
+        emptyMsg.remove();
+    }
+    
+    // Create history item
+    const historyItem = document.createElement('div');
+    historyItem.className = `history-item ${bet.result}`;
+    
+    const resultIcon = bet.result === 'win' ? '✅' : '❌';
+    const resultClass = bet.result === 'win' ? 'success' : 'error';
+    
+    historyItem.innerHTML = `
+        <div class="history-time">${bet.time}</div>
+        <div class="history-details">
+            <span class="history-eid">EID ${bet.eid}</span>
+            <span class="history-amount">${bet.amount.toLocaleString()}đ</span>
+            <span class="history-result ${resultClass}">${resultIcon} ${bet.result === 'win' ? 'THẮNG' : 'THUA'}</span>
+        </div>
+        <div class="history-balance">Số dư: ${bet.balance.toLocaleString()}đ</div>
+    `;
+    
+    // Add to top of list
+    historyContainer.insertBefore(historyItem, historyContainer.firstChild);
+    
+    // Keep only last 20 items
+    const items = historyContainer.querySelectorAll('.history-item');
+    if (items.length > 20) {
+        items[items.length - 1].remove();
+    }
+    
+    // Add flash animation
+    historyItem.classList.add('flash-animation');
+    setTimeout(() => historyItem.classList.remove('flash-animation'), 1000);
 }
 
 // Handle browser console logs

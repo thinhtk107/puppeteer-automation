@@ -380,49 +380,9 @@ function startRealtimeStats(page, logger) {
         clearInterval(window.statsIntervalId);
         console.log('📊 [STATS] Stopped by stopAutomation flag');
         return;
-      }
-      
-      // Gather statistics
-      const stats = {
-        timestamp: new Date().toISOString(),
-        bankStatus: {
-          L2: window.mySetCount_L2 || 0,
-          L3: window.mySetCount_L3 || 0,
-          L4: window.mySetCount_L4 || 0,
-          L5: window.mySetCount_L5 || 0,
-          L6: window.mySetCount_L6 || 0
-        },
-        currentStreak: {
-          type: window.myCurrentStreakType,
-          count: window.myCurrentStreakCount || 0
-        },
-        betting: {
-          baseBet: window.myBaseBetAmount || 500,
-          currentBet: window.myCurrentBetAmount || 500,
-          lastBetEid: window.myLastBetEid,
-          isWaitingResult: window.isWaitingForResult || false,
-          isWaitingFixedBet: window.isWaitingForFixedBet || false,
-          roundCounter: window.myRoundCounter || 0
-        },
-        room: {
-          bestRid: window.myBestRid
-        }
-      };
-      
-      // Log to browser console
-      const bankStr = `L2:${stats.bankStatus.L2} L3:${stats.bankStatus.L3} L4:${stats.bankStatus.L4} L5:${stats.bankStatus.L5} L6:${stats.bankStatus.L6}`;
-      const streakStr = stats.currentStreak.type ? `${stats.currentStreak.type}x${stats.currentStreak.count}` : 'None';
-      const betStr = `${stats.betting.currentBet}đ (${stats.betting.roundCounter}/4 rounds)`;
-      
-      console.log(`📊 [${new Date().toLocaleTimeString()}] Bank: ${bankStr} | Streak: ${streakStr} | Bet: ${betStr} | Room: ${stats.room.bestRid || 'N/A'}`);
-      
-      // Try to send to server if available
-      if (typeof window.sendStatsToServer === 'function') {
-        window.sendStatsToServer(stats);
-      }
-    }, 5000); // Every 5 seconds
+      }      
+    }, 10000); // Every 10 seconds
 
-    console.log('📊 [STATS] Real-time statistics started (interval: 5s)');
   }).catch(error => {
     logger && logger.error && logger.error('Failed to start real-time stats:', error.message);
   });
