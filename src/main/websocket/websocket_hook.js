@@ -231,7 +231,7 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                             // Lợi nhuận = Số dư hiện tại - Số dư ban đầu (tính từ lúc bắt đầu)
                             const profitLoss = session.myInitialBalance > 0 ? (session.myCurrentBalance - session.myInitialBalance) : 0;
                             const balanceChange = session.myCurrentBalance - session.myPreviousBalance;
-                            const winAmount = balanceChange > 0 ? balanceChange : (session.myCurrentBetAmount * 0.95);
+                            const winAmount = balanceChange > 0 ? balanceChange : (session.myCurrentBetAmount * 0.98);
                             
                             logStats('SOCKET (Martingale): THẮNG! Đặt cược EID ' + session.myLastBetEid + ' thành công. Cược: ' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ | Lãi vòng này: +' + winAmount.toLocaleString('vi-VN') + 'đ | Tổng lãi/lỗ: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
                             
@@ -328,7 +328,7 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                             // Lợi nhuận = Số dư hiện tại - Số dư ban đầu (tính từ lúc bắt đầu)
                             const profitLoss = session.myInitialBalance > 0 ? (session.myCurrentBalance - session.myInitialBalance) : 0;
                             const balanceChange = session.myCurrentBalance - session.myPreviousBalance;
-                            const winAmount = balanceChange > 0 ? balanceChange : (session.myBaseBetAmount * 0.95);
+                            const winAmount = balanceChange > 0 ? balanceChange : (session.myBaseBetAmount * 0.98);
                             
                             logStats('SOCKET (FixedBet): THẮNG! Cược ' + session.myBaseBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thành công. Lãi vòng này: +' + winAmount.toLocaleString('vi-VN') + 'đ | Tổng lãi/lỗ: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
                             
