@@ -64,28 +64,14 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
     checkTimeout();
     
     // captcha - Retry khi sai (kiểm tra bằng taigame.png)
-    logStep('Bắt đầu xử lý CAPTCHA');
+     logStep('Bắt đầu xử lý CAPTCHA');
     
-    const maxCaptchaRetries = 3; // Số lần retry tối đa
-    let captchaAttempt = 0;
-    let loginSuccess = false;
+    const ccoords = await waitForTemplate(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
     
-    while (captchaAttempt < maxCaptchaRetries && !loginSuccess) {
-      captchaAttempt++;
-      
-      if (captchaAttempt > 1) {
-        logger && logger.log && logger.log(`🔄 Retry CAPTCHA lần ${captchaAttempt}/${maxCaptchaRetries}...`);
-      }
-      
-      const ccoords = await waitForTemplate(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
-      
-      if (!ccoords) {
-        results.push({ step: 'typeCaptcha', status: 'skipped', error: 'captcha field not found' });
-        logger && logger.log && logger.log('⚠️ Bỏ qua CAPTCHA (không bắt buộc)');
-        loginSuccess = true; // Không có captcha = bỏ qua
-        break;
-      }
-      
+    if (!ccoords) {
+      results.push({ step: 'typeCaptcha', status: 'skipped', error: 'captcha field not found' });
+      logger && logger.log && logger.log('⚠️ Bỏ qua CAPTCHA (không bắt buộc)');
+    } else {
       // Đọc CAPTCHA
       let captchaText = '';
       try {
@@ -107,16 +93,14 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
           step: 'typeCaptcha', 
           status: 'ok', 
           coords: ccoords, 
-          captcha: captchaText,
-          attempt: captchaAttempt
+          captcha: captchaText
         });
       } else {
         results.push({ 
           step: 'typeCaptcha', 
           status: 'failed', 
           error: 'Không đọc được CAPTCHA', 
-          coords: ccoords,
-          attempt: captchaAttempt
+          coords: ccoords
         });
         logger && logger.warn && logger.warn('   ✗ CAPTCHA trống');
       }
@@ -127,7 +111,69 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
       
       logStep('Nhấn nút xác nhận đăng nhập');
       await clickAbsolute(page, finalCoords.x, finalCoords.y, logger);
-      await page.waitForTimeout(3000); // Chờ response từ server
+      await page.waitForTimeout(cfg.FINAL_CLICK_WAIT_MS);
+    // const maxCaptchaRetries = 3; // Số lần retry tối đa
+    // let captchaAttempt = 0;
+    // let loginSuccess = false;
+    
+    // while (captchaAttempt < maxCaptchaRetries && !loginSuccess) {
+    //   captchaAttempt++;
+      
+    //   if (captchaAttempt > 1) {
+    //     logger && logger.log && logger.log(`🔄 Retry CAPTCHA lần ${captchaAttempt}/${maxCaptchaRetries}...`);
+    //   }
+      
+    //   const ccoords = await waitForTemplate(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
+      
+    //   if (!ccoords) {
+    //     results.push({ step: 'typeCaptcha', status: 'skipped', error: 'captcha field not found' });
+    //     logger && logger.log && logger.log('⚠️ Bỏ qua CAPTCHA (không bắt buộc)');
+    //     loginSuccess = true; // Không có captcha = bỏ qua
+    //     break;
+    //   }
+      
+    //   // Đọc CAPTCHA
+    //   let captchaText = '';
+    //   try {
+    //     const { solveCaptchaOnPopup } = require('../captcha/captcha_processor_java_like');
+    //     captchaText = await solveCaptchaOnPopup(page, ccoords, templatesDir, logger);
+    //     logger && logger.log && logger.log(`   ✓ Đã đọc CAPTCHA: "${captchaText}"`);
+    //   } catch (e) {
+    //     logger && logger.error && logger.error('   ✗ Không thể đọc CAPTCHA:', e.message);
+    //     captchaText = '';
+    //   }
+      
+    //   if (captchaText && captchaText.length > 0) {
+    //     // Nhập CAPTCHA
+    //     logStep('Nhập CAPTCHA vào ô');
+    //     await typeIntoImageField(page, templatesMap, templatesDir, 'captcha_field_login_popup.png', captchaText, logger);
+    //     await page.waitForTimeout(cfg.SHORT_WAIT_MS);
+        
+    //     results.push({ 
+    //       step: 'typeCaptcha', 
+    //       status: 'ok', 
+    //       coords: ccoords, 
+    //       captcha: captchaText,
+    //       attempt: captchaAttempt
+    //     });
+    //   } else {
+    //     results.push({ 
+    //       step: 'typeCaptcha', 
+    //       status: 'failed', 
+    //       error: 'Không đọc được CAPTCHA', 
+    //       coords: ccoords,
+    //       attempt: captchaAttempt
+    //     });
+    //     logger && logger.warn && logger.warn('   ✗ CAPTCHA trống');
+    //   }
+      
+    //   // Click nút đăng nhập
+    //   const finalCoords = await waitForTemplate(page, templatesMap, templatesDir, 'final_login_button.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
+    //   if (!finalCoords) throw new Error('Không tìm thấy nút đăng nhập cuối cùng');
+      
+    //   logStep('Nhấn nút xác nhận đăng nhập');
+    //   await clickAbsolute(page, finalCoords.x, finalCoords.y, logger);
+    //   await page.waitForTimeout(3000); // Chờ response từ server
       
       // // Kiểm tra đăng nhập thành công bằng cách xem popup có biến mất không
       // logger && logger.log && logger.log('🔍 Kiểm tra đăng nhập thành công...');
