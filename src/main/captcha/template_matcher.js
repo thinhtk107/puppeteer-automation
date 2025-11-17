@@ -36,17 +36,37 @@ async function jsMatchTemplate(pagePath, templatePath) {
 
 function matchTemplate(pagePath, templatePath) {
   return new Promise((resolve, reject) => {
+    // If a bundled native exe exists (produced by PyInstaller), prefer it
+  const bundledExe = path.join(__dirname, '..', '..', 'tools', process.platform === 'win32' ? 'image_match.exe' : 'image_match');
+  // when packaged with pkg, the executable may be next to process.execPath
+  const execDirBundled = path.join(path.dirname(process.execPath), process.platform === 'win32' ? 'image_match.exe' : 'image_match');
     const py = path.join(__dirname, '..', '..', 'tools', 'image_match.py');
     const candidates = ['python', 'py', 'python3'];
     let spawned = false;
     let proc = null;
-    for (const c of candidates) {
-      try {
-        proc = spawn(c, [py, pagePath, templatePath]);
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(bundledExe)) {
+        // run the bundled native executable directly (project tree)
+        proc = spawn(bundledExe, [pagePath, templatePath]);
         spawned = true;
-        break;
-      } catch (e) {
-        spawned = false;
+      } else if (fs.existsSync(execDirBundled)) {
+        // run the bundled native executable next to packaged exe
+        proc = spawn(execDirBundled, [pagePath, templatePath]);
+        spawned = true;
+      }
+    } catch (e) {
+      spawned = false;
+    }
+    if (!spawned) {
+      for (const c of candidates) {
+        try {
+          proc = spawn(c, [py, pagePath, templatePath]);
+          spawned = true;
+          break;
+        } catch (e) {
+          spawned = false;
+        }
       }
     }
     if (!spawned) {

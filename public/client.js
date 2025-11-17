@@ -7,24 +7,24 @@ let showTimestamp = true;
 let isAutomationRunning = false;
 
 // Betting statistics
-let bettingStats = {
-    initialBalance: 0,
-    currentBalance: 0,
-    baseBetAmount: 500,
-    currentBetAmount: 500,
-    winCount: 0,
-    lossCount: 0,
-    totalProfit: 0,
-    totalBets: 0,
-    highestBet: 500,
-    totalWinAmount: 0,
-    totalLossAmount: 0,
-    currentWinStreak: 0,
-    currentLossStreak: 0,
-    maxWinStreak: 0,
-    maxLossStreak: 0,
-    history: []
-};
+// Per-session stats and logs
+let sessions = {};
+let activeSessionId = null;
+let runtimeUpdateInterval = null; // Interval để update runtime
+
+function getActiveStats() {
+    if (activeSessionId && sessions[activeSessionId]) {
+        return sessions[activeSessionId].bettingStats;
+    }
+    return null;
+}
+
+function getActiveLogs() {
+    if (activeSessionId && sessions[activeSessionId]) {
+        return sessions[activeSessionId].logs;
+    }
+    return null;
+}
 
 // Statistics
 let stats = {
@@ -68,6 +68,14 @@ async function handleLoginSubmit(e) {
     }
     
     // Get form data
+    const betAmounts = [
+        parseInt(document.getElementById('betAmount1').value) || 10000,
+        parseInt(document.getElementById('betAmount2').value) || 13000,
+        parseInt(document.getElementById('betAmount3').value) || 25000,
+        parseInt(document.getElementById('betAmount4').value) || 53000,
+        parseInt(document.getElementById('betAmount5').value) || 50000
+    ];
+    
     const formData = {
         url: document.getElementById('url').value,
         username: document.getElementById('username').value,
@@ -76,7 +84,8 @@ async function handleLoginSubmit(e) {
         enableWebSocketHook: document.getElementById('enableWebSocketHook').checked,
         showStatsOnScreen: document.getElementById('showStatsOnScreen').checked,
         headlessMode: document.getElementById('headlessMode').checked,
-        baseBetAmount: parseInt(document.getElementById('baseBetAmount').value) || 500,
+        betAmounts: betAmounts,
+        baseBetAmount: betAmounts[0], // Để tương thích với code cũ
         proxyHost: document.getElementById('proxyHost').value,
         proxyPort: document.getElementById('proxyPort').value,
         proxyUser: document.getElementById('proxyUser').value,
@@ -89,21 +98,44 @@ async function handleLoginSubmit(e) {
         return;
     }
     
-    // Initialize betting stats - SỐ DƯ SẼ TỰ ĐỘNG LẤY TỪ SOCKET
-    bettingStats.baseBetAmount = formData.baseBetAmount;
-    bettingStats.currentBetAmount = formData.baseBetAmount;
-    bettingStats.initialBalance = 0; // Sẽ được cập nhật từ socket
-    bettingStats.currentBalance = 0; // Sẽ được cập nhật từ socket
-    bettingStats.winCount = 0;
-    bettingStats.lossCount = 0;
-    bettingStats.totalProfit = 0;
-    bettingStats.totalBets = 0;
-    bettingStats.highestBet = formData.baseBetAmount; // Khởi tạo = baseBet
-    bettingStats.history = [];
+    // Create new session
+    const sessionId = 'session-' + Date.now();
+    activeSessionId = sessionId;
+    sessions[sessionId] = {
+        isRunning: true,
+        isPaused: false,
+        sessionId: sessionId,
+        startTime: Date.now(), // Thời gian bắt đầu session
+        bettingStats: {
+            initialBalance: 0,
+            currentBalance: 0,
+            betAmounts: formData.betAmounts, // Mảng 5 giá trị tiền cược
+            currentBetLevel: 0, // Index hiện tại (0-4)
+            baseBetAmount: formData.baseBetAmount,
+            currentBetAmount: formData.baseBetAmount,
+            winCount: 0,
+            lossCount: 0,
+            totalProfit: 0,
+            totalBets: 0,
+            highestBet: formData.baseBetAmount,
+            totalWinAmount: 0,
+            totalLossAmount: 0,
+            currentWinStreak: 0,
+            currentLossStreak: 0,
+            maxWinStreak: 0,
+            maxLossStreak: 0,
+            history: []
+        },
+        logs: []
+    };
     updateBettingStatsDisplay();
+    updateSessionControlButtons();
     
     // Show betting stats panel
     document.getElementById('bettingStatsSection').style.display = 'block';
+    
+    // Start runtime interval
+    startRuntimeInterval();
     
     // Update UI
     isAutomationRunning = true;
@@ -115,16 +147,23 @@ async function handleLoginSubmit(e) {
     // Clear old logs
     clearAllLogs();
     
-    // Send request
+    // Send request with sessionId
     try {
         addSystemLog('🚀 Bắt đầu gửi request đến server...', 'info');
+        addSystemLog(`📌 Session ID: ${sessionId}`, 'info');
+        
+        // Include sessionId in the request
+        const requestData = {
+            ...formData,
+            sessionId: sessionId
+        };
         
         const response = await fetch('/api/v1/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(formData)
+            body: JSON.stringify(requestData)
         });
         
         const result = await response.json();
@@ -146,8 +185,24 @@ async function handleLoginSubmit(e) {
 function handleStopAutomation() {
     if (!isAutomationRunning) return;
     
-    addSystemLog('⏹️ Đang dừng automation...', 'warning');
+    // Send stop command with sessionId
+    if (ws && ws.readyState === WebSocket.OPEN && activeSessionId) {
+        ws.send(JSON.stringify({
+            type: 'stop-automation',
+            sessionId: activeSessionId
+        }));
+        addSystemLog(`⏹️ Đã gửi lệnh dừng cho session: ${activeSessionId}`, 'warning');
+    } else {
+        addSystemLog('⏹️ Đang dừng automation...', 'warning');
+    }
+    
     showFormMessage('Automation đã bị dừng bởi người dùng', 'info');
+    
+    // Mark session as stopped
+    if (activeSessionId && sessions[activeSessionId]) {
+        sessions[activeSessionId].isRunning = false;
+    }
+    
     resetAutomationUI();
 }
 
@@ -157,6 +212,9 @@ function resetAutomationUI() {
     updateAutomationStatus('idle');
     document.getElementById('startBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
+    
+    // Stop runtime interval nếu đang chạy
+    stopRuntimeInterval();
 }
 
 // Show form message
@@ -230,6 +288,18 @@ function initializeWebSocket() {
         
         try {
             const data = JSON.parse(event.data);
+            
+            // FILTER BY SESSION ID - Only process messages for the active session
+            // If message has sessionId:
+            //   - And we have activeSessionId: only process if they match
+            //   - And we DON'T have activeSessionId: ignore (this is message for another session)
+            if (data.sessionId) {
+                if (!activeSessionId || data.sessionId !== activeSessionId) {
+                    console.log(`Ignoring message from different session: ${data.sessionId} (active: ${activeSessionId || 'none'})`);
+                    return;
+                }
+            }
+            
             handleMessage(data);
             
             // Check if automation completed
@@ -301,18 +371,53 @@ function handleMessage(data) {
         case 'automation-complete':
             updateAutomationStatus('completed');
             addSystemLog('Automation completed successfully', 'success');
+            // Mark session as stopped
+            if (activeSessionId && sessions[activeSessionId]) {
+                sessions[activeSessionId].isRunning = false;
+                updateSessionControlButtons();
+            }
+            // Stop runtime interval
+            stopRuntimeInterval();
             break;
             
         case 'automation-error':
             updateAutomationStatus('error');
             addSystemLog(`Automation error: ${data.message}`, 'error');
             stats.errorCount++;
+            // Mark session as stopped
+            if (activeSessionId && sessions[activeSessionId]) {
+                sessions[activeSessionId].isRunning = false;
+                updateSessionControlButtons();
+            }
+            // Stop runtime interval
+            stopRuntimeInterval();
             break;
             
         case 'log':
             addSystemLog(data.message, data.level || 'info');
             if (data.level === 'error') {
                 stats.errorCount++;
+            }
+            // Check if it's a pause message
+            if (data.message && data.message.includes('⏸️') && data.message.includes('tạm dừng')) {
+                if (activeSessionId && sessions[activeSessionId]) {
+                    sessions[activeSessionId].isPaused = true;
+                    updateSessionControlButtons();
+                }
+            }
+            // Check if it's a resume message
+            if (data.message && data.message.includes('▶️') && data.message.includes('tiếp tục')) {
+                if (activeSessionId && sessions[activeSessionId]) {
+                    sessions[activeSessionId].isPaused = false;
+                    updateSessionControlButtons();
+                }
+            }
+            // Check if it's a stop message for this session
+            if (data.message && data.message.includes('🛑') && data.message.includes('DỪNG')) {
+                if (activeSessionId && sessions[activeSessionId]) {
+                    sessions[activeSessionId].isRunning = false;
+                    updateSessionControlButtons();
+                }
             }
             break;
             
@@ -387,26 +492,32 @@ function addWebSocketLog(data, direction) {
 
 // Add system log entry
 function addSystemLog(message, level = 'info') {
+    // Store log in active session
+    if (activeSessionId && sessions[activeSessionId]) {
+        sessions[activeSessionId].logs.push({ message, level, timestamp: new Date() });
+    }
+    // Render only active session logs
     const container = document.getElementById('systemLogs');
     const logCount = document.getElementById('systemLogCount');
-    
-    const entry = document.createElement('div');
-    entry.className = `log-entry ${level}`;
-    
-    const timestamp = showTimestamp ? `<span class="log-timestamp">${formatTime(new Date())}</span>` : '';
-    const typeLabel = level.toUpperCase();
-    
-    entry.innerHTML = `
-        ${timestamp}
-        <span class="log-type ${level}">${typeLabel}</span>
-        <span class="log-message">${escapeHtml(message)}</span>
-    `;
-    
-    container.appendChild(entry);
-    logCount.textContent = `${container.children.length} logs`;
-    
-    if (autoScroll) {
-        container.scrollTop = container.scrollHeight;
+    if (container) {
+        container.innerHTML = '';
+        const logs = getActiveLogs() || [];
+        logs.forEach(log => {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${log.level}`;
+            const ts = showTimestamp ? `<span class="log-timestamp">${formatTime(log.timestamp)}</span>` : '';
+            const typeLabel = log.level.toUpperCase();
+            entry.innerHTML = `
+                ${ts}
+                <span class="log-type ${log.level}">${typeLabel}</span>
+                <span class="log-message">${escapeHtml(log.message)}</span>
+            `;
+            container.appendChild(entry);
+        });
+        logCount.textContent = `${logs.length} logs`;
+        if (autoScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
     }
 }
 
@@ -499,38 +610,49 @@ function setupEventListeners() {
         addSystemLog(isPaused ? 'Logs paused' : 'Logs resumed', 'info');
     });
     
-    // Stop betting button
-    const stopBettingBtn = document.getElementById('stopBettingBtn');
-    if (stopBettingBtn) {
-        stopBettingBtn.addEventListener('click', handleStopBetting);
-    }
-    
-    // Reset stats button
-    const resetStatsBtn = document.getElementById('resetStatsBtn');
-    if (resetStatsBtn) {
-        resetStatsBtn.addEventListener('click', handleResetStats);
-    }
-    
     // Export logs
     document.getElementById('exportLogsBtn').addEventListener('click', () => {
-        const logs = {
-            timestamp: new Date().toISOString(),
-            steps: Array.from(document.getElementById('stepLogs').children).map(el => el.textContent),
-            websocket: Array.from(document.getElementById('wsLogs').children).map(el => el.textContent),
-            system: Array.from(document.getElementById('systemLogs').children).map(el => el.textContent),
-            statistics: stats,
-            bettingStats: bettingStats
-        };
-        
-        const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `puppeteer-logs-${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        
-        addSystemLog('Logs exported successfully', 'success');
+        try {
+            const logs = {
+                timestamp: new Date().toISOString(),
+                activeSessionId: activeSessionId,
+                sessions: {},
+                systemLogs: Array.from(document.getElementById('systemLogs').children).map(el => el.textContent),
+                statistics: stats
+            };
+            
+            // Export all sessions data
+            for (const sessionId in sessions) {
+                const session = sessions[sessionId];
+                logs.sessions[sessionId] = {
+                    logs: session.logs || [],
+                    bettingStats: session.bettingStats || {},
+                    startTime: session.startTime,
+                    runtime: session.runtime
+                };
+            }
+            
+            // Add active session betting stats if available
+            const activeBettingStats = getActiveStats();
+            if (activeBettingStats) {
+                logs.activeBettingStats = activeBettingStats;
+            }
+            
+            const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `puppeteer-logs-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            addSystemLog('✅ Logs exported successfully', 'success');
+        } catch (error) {
+            console.error('Export error:', error);
+            addSystemLog(`❌ Export failed: ${error.message}`, 'error');
+        }
     });
     
     // Auto-scroll checkbox
@@ -602,69 +724,50 @@ function clearAllLogs() {
 function handleBettingEvent(data) {
     const { event, eid, amount, result, balance } = data;
     
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
     switch(event) {
         case 'bet-placed':
             bettingStats.totalBets++;
             bettingStats.currentBetAmount = amount;
             addSystemLog(`🎲 Đặt cược EID ${eid} với số tiền: ${amount.toLocaleString('vi-VN')}`, 'info');
             break;
-            
         case 'bet-win':
             bettingStats.winCount++;
-            bettingStats.currentBetAmount = bettingStats.baseBetAmount; // Reset to base
-            const winProfit = amount; // Profit from win
-            // totalProfit được cập nhật từ backend (profitLoss)
-            // bettingStats.totalProfit += winProfit;
+            bettingStats.currentBetAmount = bettingStats.baseBetAmount;
+            const winProfit = amount;
             bettingStats.currentBalance += winProfit;
-            
             addSystemLog(`✅ THẮNG! EID ${eid} | Tiền cược: ${amount.toLocaleString('vi-VN')} | Lãi: +${winProfit.toLocaleString('vi-VN')}`, 'success');
             break;
-            
         case 'bet-loss':
             bettingStats.lossCount++;
-            bettingStats.currentBetAmount = amount * 2; // Double for next bet (Martingale)
+            bettingStats.currentBetAmount = amount * 2;
             const lossAmount = -amount;
-            // totalProfit được cập nhật từ backend (profitLoss)
-            // bettingStats.totalProfit += lossAmount;
             bettingStats.currentBalance += lossAmount;
-            
             addSystemLog(`❌ THUA! EID ${eid} | Tiền cược: ${amount.toLocaleString('vi-VN')} | Lỗ: ${lossAmount.toLocaleString('vi-VN')}`, 'error');
             break;
-            
         case 'balance-update':
             if (balance !== undefined) {
                 bettingStats.currentBalance = balance;
             }
             break;
     }
-    
     updateBettingStatsDisplay();
 }
 
 // Update betting stats display
 function updateBettingStatsDisplay() {
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
     console.log('🔄 Updating betting stats display...', bettingStats);
-    
     const currentBalanceEl = document.getElementById('currentBalance');
     const currentBetEl = document.getElementById('currentBetDisplay');
     const winCountEl = document.getElementById('winCount');
     const lossCountEl = document.getElementById('lossCount');
     const totalProfitEl = document.getElementById('totalProfit');
     const totalBetsEl = document.getElementById('totalBets');
-    
-    console.log('🔍 Elements found:', {
-        currentBalanceEl: !!currentBalanceEl,
-        currentBetEl: !!currentBetEl,
-        winCountEl: !!winCountEl,
-        lossCountEl: !!lossCountEl,
-        totalProfitEl: !!totalProfitEl,
-        totalBetsEl: !!totalBetsEl
-    });
-    
     if (currentBalanceEl) {
         currentBalanceEl.textContent = bettingStats.currentBalance.toLocaleString('vi-VN');
-        console.log('✅ Updated currentBalance:', currentBalanceEl.textContent);
-        // Add color based on profit/loss
         if (bettingStats.currentBalance > bettingStats.initialBalance) {
             currentBalanceEl.style.color = 'var(--success-color)';
         } else if (bettingStats.currentBalance < bettingStats.initialBalance) {
@@ -672,35 +775,65 @@ function updateBettingStatsDisplay() {
         } else {
             currentBalanceEl.style.color = 'var(--text-primary)';
         }
-    } else {
-        console.error('❌ Element currentBalance not found!');
     }
-    
     if (currentBetEl) {
         currentBetEl.textContent = bettingStats.currentBetAmount.toLocaleString('vi-VN');
-        console.log('✅ Updated currentBet:', currentBetEl.textContent);
     }
-    
     if (winCountEl) {
         winCountEl.textContent = bettingStats.winCount;
-        console.log('✅ Updated winCount:', winCountEl.textContent);
     }
-    
     if (lossCountEl) {
         lossCountEl.textContent = bettingStats.lossCount;
-        console.log('✅ Updated lossCount:', lossCountEl.textContent);
     }
-    
     if (totalProfitEl) {
         const profit = bettingStats.totalProfit;
         totalProfitEl.textContent = (profit >= 0 ? '+' : '') + profit.toLocaleString('vi-VN');
         totalProfitEl.className = 'stat-value ' + (profit >= 0 ? 'positive' : 'negative');
-        console.log('✅ Updated totalProfit:', totalProfitEl.textContent);
     }
-    
     if (totalBetsEl) {
         totalBetsEl.textContent = bettingStats.totalBets;
-        console.log('✅ Updated totalBets:', totalBetsEl.textContent);
+    }
+    
+    // Update runtime
+    updateRuntimeDisplay();
+}
+
+// Update runtime display
+function updateRuntimeDisplay() {
+    if (!activeSessionId || !sessions[activeSessionId]) return;
+    
+    const session = sessions[activeSessionId];
+    const runtimeEl = document.getElementById('runtime');
+    
+    if (runtimeEl && session.startTime) {
+        const elapsedMs = Date.now() - session.startTime;
+        const totalSeconds = Math.floor(elapsedMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        
+        runtimeEl.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+}
+
+// Start runtime interval
+function startRuntimeInterval() {
+    // Clear existing interval nếu có
+    if (runtimeUpdateInterval) {
+        clearInterval(runtimeUpdateInterval);
+    }
+    
+    // Update runtime mỗi giây
+    runtimeUpdateInterval = setInterval(() => {
+        updateRuntimeDisplay();
+    }, 1000);
+}
+
+// Stop runtime interval
+function stopRuntimeInterval() {
+    if (runtimeUpdateInterval) {
+        clearInterval(runtimeUpdateInterval);
+        runtimeUpdateInterval = null;
     }
 }
 
@@ -710,20 +843,22 @@ function resetBettingStats() {
         return;
     }
     
-    bettingStats = {
-        initialBalance: bettingStats.initialBalance,
-        currentBalance: bettingStats.initialBalance,
-        baseBetAmount: bettingStats.baseBetAmount,
-        currentBetAmount: bettingStats.baseBetAmount,
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
+    const base = bettingStats.baseBetAmount;
+    const initial = bettingStats.initialBalance;
+    Object.assign(bettingStats, {
+        initialBalance: initial,
+        currentBalance: initial,
+        baseBetAmount: base,
+        currentBetAmount: base,
         winCount: 0,
         lossCount: 0,
         totalProfit: 0,
         totalBets: 0,
         history: []
-    };
-    
+    });
     updateBettingStatsDisplay();
-    
     addSystemLog('✓ Đã reset thống kê cược', 'success');
 }
 
@@ -733,16 +868,121 @@ function handleStopBetting() {
         return;
     }
     
-    // Send stop command via WebSocket
+    // Send stop command via WebSocket WITH SESSION ID
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: 'stop-automation',
+            sessionId: activeSessionId, // Gửi sessionId để chỉ dừng session này
             timestamp: Date.now()
         }));
     }
     
-    addSystemLog('🛑 ĐÃ GỬI LỆNH DỪNG CHƯƠNG TRÌNH', 'warning');
+    addSystemLog('🛑 ĐÃ GỬI LỆNH DỪNG CHƯƠNG TRÌNH CHO SESSION NÀY', 'warning');
     addSystemLog('⚠️ Chương trình sẽ dừng sau khi hoàn thành cược hiện tại (nếu có)', 'warning');
+}
+
+// Stop session (per-session control) - TẠM DỪNG ĐẶT CƯỢC
+function stopSession() {
+    if (!activeSessionId || !sessions[activeSessionId]) {
+        addSystemLog('❌ Không có session nào đang hoạt động', 'error');
+        return;
+    }
+    
+    const session = sessions[activeSessionId];
+    if (session.isPaused) {
+        addSystemLog('⚠️ Session này đã tạm dừng rồi', 'warning');
+        return;
+    }
+    
+    // Send PAUSE command via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'pause-betting',
+            sessionId: activeSessionId,
+            timestamp: Date.now()
+        }));
+        
+        addSystemLog(`⏸️ Đã tạm dừng đặt cược cho session: ${activeSessionId}`, 'warning');
+        session.isPaused = true;
+        
+        // Update UI
+        updateSessionControlButtons();
+    } else {
+        addSystemLog('❌ WebSocket chưa kết nối', 'error');
+    }
+}
+
+// Resume session (per-session control) - TIẾP TỤC ĐẶT CƯỢC
+function resumeSession() {
+    if (!activeSessionId || !sessions[activeSessionId]) {
+        addSystemLog('❌ Không có session nào để tiếp tục', 'error');
+        return;
+    }
+    
+    const session = sessions[activeSessionId];
+    if (!session.isPaused) {
+        addSystemLog('⚠️ Session này đang chạy rồi', 'warning');
+        return;
+    }
+    
+    // Send RESUME command via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'resume-betting',
+            sessionId: activeSessionId,
+            timestamp: Date.now()
+        }));
+        
+        addSystemLog(`▶️ Đã tiếp tục đặt cược cho session: ${activeSessionId}`, 'success');
+        session.isPaused = false;
+        
+        // Update UI
+        updateSessionControlButtons();
+    } else {
+        addSystemLog('❌ WebSocket chưa kết nối', 'error');
+    }
+}
+
+// Update session control buttons
+function updateSessionControlButtons() {
+    const stopBtn = document.getElementById('stopSessionBtn');
+    const resumeBtn = document.getElementById('resumeSessionBtn');
+    const sessionIdEl = document.getElementById('sessionIdDisplay');
+    
+    if (!activeSessionId || !sessions[activeSessionId]) {
+        if (stopBtn) stopBtn.style.display = 'none';
+        if (resumeBtn) resumeBtn.style.display = 'none';
+        if (sessionIdEl) sessionIdEl.textContent = '';
+        return;
+    }
+    
+    const session = sessions[activeSessionId];
+    const shortId = activeSessionId.substring(activeSessionId.length - 8);
+    
+    if (sessionIdEl) {
+        sessionIdEl.textContent = `(${shortId})`;
+    }
+    
+    // Hiển thị button dựa trên trạng thái isPaused
+    if (session.isPaused) {
+        // Đang tạm dừng -> hiển thị nút Tiếp tục
+        if (stopBtn) {
+            stopBtn.style.display = 'none';
+        }
+        if (resumeBtn) {
+            resumeBtn.style.display = 'inline-block';
+            resumeBtn.disabled = false;
+        }
+    } else {
+        // Đang chạy -> hiển thị nút Tạm dừng
+        if (stopBtn) {
+            stopBtn.style.display = 'inline-block';
+            stopBtn.disabled = false;
+        }
+        if (resumeBtn) {
+            resumeBtn.style.display = 'none';
+        }
+    }
 }
 
 // Handle reset stats button
@@ -754,7 +994,8 @@ function handleResetStats() {
 function handleBettingStatistics(data) {
     console.log('📊 Received betting statistics:', data);
     
-    // Update all statistics from injected code
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
     if (data.currentBalance !== undefined) {
         bettingStats.currentBalance = data.currentBalance;
     }
@@ -776,7 +1017,6 @@ function handleBettingStatistics(data) {
     if (data.lossCount !== undefined) {
         bettingStats.lossCount = data.lossCount;
     }
-    // Cập nhật totalProfit từ profitLoss (Tổng lãi/lỗ = Số dư hiện tại - Số dư ban đầu)
     if (data.profitLoss !== undefined) {
         bettingStats.totalProfit = data.profitLoss;
     } else if (data.profit !== undefined) {
@@ -785,8 +1025,6 @@ function handleBettingStatistics(data) {
     if (data.highestBet !== undefined) {
         bettingStats.highestBet = data.highestBet;
     }
-    
-    // Update advanced stats data
     if (data.totalWinAmount !== undefined) {
         bettingStats.totalWinAmount = data.totalWinAmount;
     }
@@ -805,21 +1043,17 @@ function handleBettingStatistics(data) {
     if (data.maxLossStreak !== undefined) {
         bettingStats.maxLossStreak = data.maxLossStreak;
     }
-    
     console.log('📊 Updated bettingStats:', bettingStats);
-    
-    // Update display
     updateBettingStatsDisplay();
-    
-    // Update advanced stats
     updateAdvancedStats(data);
-    
-    // Update bank status
     updateBankStatus(data);
 }
 
 // Update advanced statistics display
 function updateAdvancedStats(data) {
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
+    
     // Win rate
     const winRateEl = document.getElementById('winRate');
     if (winRateEl) {
@@ -834,54 +1068,48 @@ function updateAdvancedStats(data) {
     // Highest bet
     const highestBetEl = document.getElementById('highestBet');
     if (highestBetEl) {
-        const highestBetValue = data.highestBet || bettingStats.highestBet || 0;
+        const highestBetValue = data.highestBet !== undefined ? data.highestBet : (bettingStats.highestBet || 0);
         highestBetEl.textContent = highestBetValue.toLocaleString('vi-VN');
     }
     
-    // Runtime
-    const runtimeEl = document.getElementById('runtime');
-    if (runtimeEl && data.runtime !== undefined) {
-        const hours = Math.floor(data.runtime / 3600);
-        const minutes = Math.floor((data.runtime % 3600) / 60);
-        const seconds = data.runtime % 60;
-        runtimeEl.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
+    // Runtime - được update bởi local timer, không cần update từ server
+    // updateRuntimeDisplay() được gọi tự động mỗi giây
     
     // Total win/loss amounts - Ưu tiên từ bettingStats
     const totalWinAmountEl = document.getElementById('totalWinAmount');
     if (totalWinAmountEl) {
-        const winAmount = data.totalWinAmount !== undefined ? data.totalWinAmount : bettingStats.totalWinAmount;
-        totalWinAmountEl.textContent = `+${winAmount.toLocaleString('vi-VN')}`;
+        const winAmount = data.totalWinAmount !== undefined ? data.totalWinAmount : (bettingStats.totalWinAmount || 0);
+        totalWinAmountEl.textContent = `+${winAmount.toLocaleString('vi-VN')}đ`;
     }
     
     const totalLossAmountEl = document.getElementById('totalLossAmount');
     if (totalLossAmountEl) {
-        const lossAmount = data.totalLossAmount !== undefined ? data.totalLossAmount : bettingStats.totalLossAmount;
-        totalLossAmountEl.textContent = `-${lossAmount.toLocaleString('vi-VN')}`;
+        const lossAmount = data.totalLossAmount !== undefined ? data.totalLossAmount : (bettingStats.totalLossAmount || 0);
+        totalLossAmountEl.textContent = `-${lossAmount.toLocaleString('vi-VN')}đ`;
     }
     
     // Consecutive wins/losses - Ưu tiên từ bettingStats
     const currentWinStreakEl = document.getElementById('currentWinStreak');
     if (currentWinStreakEl) {
-        const winStreak = data.currentConsecutiveWins !== undefined ? data.currentConsecutiveWins : bettingStats.currentWinStreak;
+        const winStreak = data.currentConsecutiveWins !== undefined ? data.currentConsecutiveWins : (bettingStats.currentWinStreak || 0);
         currentWinStreakEl.textContent = winStreak;
     }
     
     const currentLossStreakEl = document.getElementById('currentLossStreak');
     if (currentLossStreakEl) {
-        const lossStreak = data.currentConsecutiveLosses !== undefined ? data.currentConsecutiveLosses : bettingStats.currentLossStreak;
+        const lossStreak = data.currentConsecutiveLosses !== undefined ? data.currentConsecutiveLosses : (bettingStats.currentLossStreak || 0);
         currentLossStreakEl.textContent = lossStreak;
     }
     
     const maxWinStreakEl = document.getElementById('maxWinStreak');
     if (maxWinStreakEl) {
-        const maxWin = data.maxConsecutiveWins !== undefined ? data.maxConsecutiveWins : bettingStats.maxWinStreak;
+        const maxWin = data.maxConsecutiveWins !== undefined ? data.maxConsecutiveWins : (bettingStats.maxWinStreak || 0);
         maxWinStreakEl.textContent = maxWin;
     }
     
     const maxLossStreakEl = document.getElementById('maxLossStreak');
     if (maxLossStreakEl) {
-        const maxLoss = data.maxConsecutiveLosses !== undefined ? data.maxConsecutiveLosses : bettingStats.maxLossStreak;
+        const maxLoss = data.maxConsecutiveLosses !== undefined ? data.maxConsecutiveLosses : (bettingStats.maxLossStreak || 0);
         maxLossStreakEl.textContent = maxLoss;
     }
 }
@@ -974,17 +1202,31 @@ function handleRealTimeStats(data) {
         if (lastBetEidEl) lastBetEidEl.textContent = 'EID ' + stats.lastBet.eid;
     }
     
-    // Update Next Bet Amount
-    if (stats.nextBetAmount) {
+    // Update Next Bet Amount and Bet Level
+    if (stats.nextBetAmount !== undefined) {
         const nextBetEl = document.getElementById('nextBetAmount');
+        const betLevelInfoEl = document.getElementById('betLevelInfo');
         if (nextBetEl) {
             nextBetEl.textContent = stats.nextBetAmount.toLocaleString('vi-VN') + 'đ';
             nextBetEl.className = 'stat-value';
             
             // Highlight if doubled (Martingale)
-            if (stats.nextBetAmount > bettingStats.baseBetAmount) {
+            const bettingStats = getActiveStats();
+            if (bettingStats && stats.nextBetAmount > bettingStats.baseBetAmount) {
                 nextBetEl.classList.add('bet-doubled');
             }
+        }
+        
+        // Update bet level info
+        if (betLevelInfoEl && stats.currentBetLevel !== undefined && stats.maxBetLevel !== undefined) {
+            betLevelInfoEl.textContent = `Mức ${stats.currentBetLevel}/${stats.maxBetLevel}`;
+        }
+    } else if (stats.currentBetAmount !== undefined) {
+        // Fallback to currentBetAmount if nextBetAmount not available
+        const nextBetEl = document.getElementById('nextBetAmount');
+        if (nextBetEl) {
+            nextBetEl.textContent = stats.currentBetAmount.toLocaleString('vi-VN') + 'đ';
+            nextBetEl.className = 'stat-value';
         }
     }
     
@@ -1039,6 +1281,9 @@ function handleRealTimeStats(data) {
     
     // Update Current Balance
     if (stats.currentBalance !== undefined) {
+        const bettingStats = getActiveStats();
+        if (!bettingStats) return;
+        
         // Set initialBalance lần đầu tiên nhận được balance từ socket
         if (bettingStats.initialBalance === 0 && stats.currentBalance > 0) {
             bettingStats.initialBalance = stats.currentBalance;
@@ -1178,9 +1423,10 @@ function handleRealTimeStats(data) {
     const totalProfitEl = document.getElementById('totalProfit');
     if (totalProfitEl) {
         let profit = 0;
+        const bettingStats = getActiveStats();
         
         // Ưu tiên tính từ balance (nếu có initialBalance)
-        if (bettingStats.initialBalance > 0 && bettingStats.currentBalance !== undefined) {
+        if (bettingStats && bettingStats.initialBalance > 0 && bettingStats.currentBalance !== undefined) {
             profit = bettingStats.currentBalance - bettingStats.initialBalance;
         } 
         // Fallback: Tính từ totalWin - totalLoss

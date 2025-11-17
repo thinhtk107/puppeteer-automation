@@ -133,6 +133,26 @@ async function createBrowserInstance(config, logger) {
     launchOptions.args.push(`--proxy-server=${proxyAddress}`);
   }
   
+  // ===== TỰ ĐỘNG TÌM CHROME (ưu tiên bundled Chrome) =====
+  const path = require('path');
+  const fs = require('fs');
+  
+  // Try to find bundled Chrome (for standalone distribution)
+  const bundledChromePath = path.join(__dirname, '..', '..', '..', 'chrome', 'chrome.exe');
+  
+  // Check environment variable first
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    logger.log(`🌐 Using Chrome from env variable: ${launchOptions.executablePath}`);
+  } else if (fs.existsSync(bundledChromePath)) {
+    // Use bundled Chrome if available (standalone mode)
+    launchOptions.executablePath = bundledChromePath;
+    logger.log(`🌐 Using bundled Chrome: ${launchOptions.executablePath}`);
+  } else {
+    // Let Puppeteer find Chrome automatically
+    logger.log(`🌐 Using Puppeteer's default Chrome`);
+  }
+  
   const browser = await puppeteer.launch(launchOptions);
   logger.log('✓ Regular browser launched');
   
@@ -145,26 +165,77 @@ async function createBrowserInstance(config, logger) {
 async function runAutomation(payload, uploadedFiles) {
   // Log payload để debug
   console.log(`[DEBUG] payload.headlessMode: ${payload.headlessMode} (type: ${typeof payload.headlessMode})`);
+  console.log(`[DEBUG] payload.sessionId: ${payload.sessionId}`);
   
-  // LUÔN TẠO SESSION MỚI cho mỗi lần chạy automation
-  // Không dùng lại session cũ để tránh config cũ
-  const sessionId = sessionManager.createSession(
-    payload.userId || 'default-user',
-    {
-      url: payload.url,
-      username: payload.loginRequest?.username,
-      password: payload.loginRequest?.password,
-      baseBet: payload.baseBetAmount || 500,
-      useGoLogin: payload.useGoLogin || false,
-      goLoginToken: payload.goLoginToken || '',
-      goLoginProfileId: payload.goLoginProfileId || '',
-      goLoginWsEndpoint: payload.goLoginWsEndpoint || '',
-      proxyHost: payload.proxyHost,
-      proxyPort: payload.proxyPort
+  // SỬ DỤNG sessionId TỪ PAYLOAD (từ client) hoặc tạo mới nếu không có
+  let sessionId = payload.sessionId;
+  
+  if (!sessionId) {
+    // Nếu không có sessionId từ client, tạo mới
+    sessionId = sessionManager.createSession(
+      payload.userId || 'default-user',
+      {
+        url: payload.url,
+        username: payload.loginRequest?.username,
+        password: payload.loginRequest?.password,
+        baseBet: payload.baseBetAmount || 500,
+        useGoLogin: payload.useGoLogin || false,
+        goLoginToken: payload.goLoginToken || '',
+        goLoginProfileId: payload.goLoginProfileId || '',
+        goLoginWsEndpoint: payload.goLoginWsEndpoint || '',
+        proxyHost: payload.proxyHost,
+        proxyPort: payload.proxyPort
+      }
+    );
+    console.log(`[Session ${sessionId}] 📝 Created new session`);
+  } else {
+    // Nếu có sessionId từ client, kiểm tra xem session đã tồn tại chưa
+    let session = sessionManager.getSession(sessionId);
+    if (!session) {
+      // Session chưa tồn tại, tạo mới với sessionId từ client
+      sessionManager.sessions.set(sessionId, {
+        sessionId: sessionId,
+        userId: payload.userId || 'default-user',
+        browser: null,
+        page: null,
+        goLoginInstance: null,
+        config: {
+          url: payload.url,
+          username: payload.loginRequest?.username,
+          password: payload.loginRequest?.password,
+          baseBet: payload.baseBetAmount || 500,
+          betAmounts: payload.betAmounts || [10000, 13000, 25000, 53000, 50000],
+          headless: payload.headlessMode !== false,
+          useGoLogin: payload.useGoLogin || false,
+          goLoginToken: payload.goLoginToken || '',
+          goLoginProfileId: payload.goLoginProfileId || '',
+          goLoginWsEndpoint: payload.goLoginWsEndpoint || '',
+          proxyHost: payload.proxyHost,
+          proxyPort: payload.proxyPort
+        },
+        stats: {
+          bankStatus: { L2: 0, L3: 0, L4: 0, L5: 0, L6: 0 },
+          currentBalance: 1000,
+          totalBets: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWinAmount: 0,
+          totalLossAmount: 0,
+          currentWinStreak: 0,
+          currentLossStreak: 0,
+          maxWinStreak: 0,
+          maxLossStreak: 0
+        },
+        status: 'idle',
+        error: null,
+        createdAt: new Date(),
+        lastActivity: new Date()
+      });
+      console.log(`[Session ${sessionId}] 📝 Created new session with client sessionId`);
+    } else {
+      console.log(`[Session ${sessionId}] 📝 Using existing session`);
     }
-  );
-  
-  console.log(`[Session ${sessionId}] 📝 Created new session`);
+  }
   
   const session = sessionManager.getSession(sessionId);
   if (!session) {
@@ -300,7 +371,8 @@ async function runAutomation(payload, uploadedFiles) {
             
             logger.log('🎮 Đang click vào game phụng để vào lại...');
             const { clickPhungGame } = require('./flows/join_game_flow');
-            const templatesDir = path.join(__dirname, '..', 'uploads');
+            const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..');
+            const templatesDir = path.join(projectRoot, 'uploads');
             
             // Build templates map from resources
             const resourcesDir = path.join(__dirname, '..', 'resources');
@@ -331,13 +403,11 @@ async function runAutomation(payload, uploadedFiles) {
           const jsonStr = text.substring('[BET_EVENT]'.length);
           const betEvent = JSON.parse(jsonStr);
           
-          // Broadcast to WebSocket clients
-          if (global.broadcastToClients) {
-            global.broadcastToClients({
-              type: 'betting-event',
-              ...betEvent
-            });
-          }
+          // Broadcast to WebSocket clients FOR THIS SESSION ONLY
+          broadcast({
+            type: 'betting-event',
+            ...betEvent
+          });
           
           logger.log(`📊 Betting Event: ${betEvent.event} | EID: ${betEvent.eid} | Amount: ${betEvent.amount}`);
           return; // Don't log the raw [BET_EVENT] message
@@ -350,20 +420,14 @@ async function runAutomation(payload, uploadedFiles) {
       if (text.startsWith('[BETTING_STATS]')) {
         try {
           const jsonStr = text.substring('[BETTING_STATS]'.length);
-          const statsData = JSON.parse(jsonStr);
-          
-          logger.log(`📊 Parsed betting stats: Balance=${statsData.currentBalance}, Bets=${statsData.totalBets}, Wins=${statsData.winCount}`);
-          
-          // Broadcast to WebSocket clients
-          if (global.broadcastToClients) {
-            global.broadcastToClients({
-              type: 'betting-stats',
-              ...statsData
-            });
-            logger.log('✅ Broadcasted betting stats to clients');
-          } else {
-            logger.warn('⚠️ global.broadcastToClients not available');
-          }
+          const statsData = JSON.parse(jsonStr);               
+          // Broadcast to WebSocket clients FOR THIS SESSION ONLY
+          broadcast({
+            type: 'betting-stats',
+            sessionId: sessionId, // Thêm sessionId để client filter được
+            ...statsData
+          });
+          logger.log('✅ Broadcasted betting stats to session clients');
           
           return; // Don't log the raw stats message
         } catch (parseErr) {
@@ -373,6 +437,11 @@ async function runAutomation(payload, uploadedFiles) {
       
       // Bỏ qua log từ WebSocket hook
       if (text.includes('SOCKET') || text.includes('WebSocket') || text.includes('hook')) {
+        return;
+      }
+      
+      // Bỏ qua log về pause/resume flag sync (tránh spam)
+      if (text.includes('Pause flag') || text.includes('Stop flag synced')) {
         return;
       }
       
@@ -410,10 +479,11 @@ async function runAutomation(payload, uploadedFiles) {
       // Setup CDP listener for WebSocket creation events
       await listenForWebSocketCreation(page, logger);
       
-      // Inject WebSocket hook script before page loads with baseBet, sessionId, and showStatsOnScreen
+      // Inject WebSocket hook script before page loads with baseBet, sessionId, showStatsOnScreen and betAmounts
       const baseBet = payload.baseBetAmount || 500; // Lấy từ form hoặc default 500
+      const betAmounts = payload.betAmounts || [10000, 13000, 25000, 53000, 50000]; // Mảng 5 mức cược
       const showStatsOnScreen = payload.showStatsOnScreen !== false; // Default true
-      await setupWebSocketHook(page, logger, { baseBet, sessionId, showStatsOnScreen });
+      await setupWebSocketHook(page, logger, { baseBet, betAmounts, sessionId, showStatsOnScreen });
       
       logger.log('✓ WebSocket hook đã sẵn sàng\n');
     } catch (wsError) {
@@ -509,7 +579,8 @@ async function runAutomation(payload, uploadedFiles) {
   }
 
   // prepare uploaded templates map
-  const templatesDir = path.join(__dirname, '..', 'uploads');
+  const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..');
+  const templatesDir = path.join(projectRoot, 'uploads');
   if (!fs.existsSync(templatesDir)) fs.mkdirSync(templatesDir, { recursive: true });
   const templatesMap = {};
   (uploadedFiles || []).forEach(f => {

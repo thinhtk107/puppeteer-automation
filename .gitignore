@@ -43,3 +43,31 @@ screenshots/
 !src/resources/*.png
 !eng.traineddata
 !vie.traineddata
+
+# ============================================
+# Packaged/Standalone Build Files
+# ============================================
+# Standalone folders
+standalone-app/
+puppeteer-automation-folder/
+puppeteer-automation-standalone-*/
+dist-folder/
+.node18/
+.node20/
+tools/
+
+# Zip archives
+*.zip
+!node_modules.zip
+
+# Build logs
+nexe-build-stderr.log
+run_err.log
+run_out.log
+
+# Build scripts output
+scripts/
+
+# Backup folder
+backup/
+

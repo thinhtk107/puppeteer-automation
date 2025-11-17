@@ -9,7 +9,6 @@
  * 6. OCR result with GitHub Models
  */
 
-const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs');
 const Jimp = require('jimp');
@@ -91,7 +90,8 @@ async function detectColorByTemplateMatching(page, resourcesDir, logger) {
     
     // Step 1: Take screenshot of current page
     logger && logger.log && logger.log('  Step 1: Capturing page screenshot for template matching...');
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..', '..');
+    const uploadsDir = path.join(projectRoot, 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
@@ -186,11 +186,12 @@ async function detectTargetColorFromInstruction(page, resourcesDir, logger) {
     }
     
     // Take full page screenshot
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..', '..');
+    const uploadsDir = path.join(projectRoot, 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
-    
+
     const fullScreenshotPath = path.join(uploadsDir, `instruction_detect_${Date.now()}.png`);
     await page.screenshot({ path: fullScreenshotPath, fullPage: false });
     logger && logger.log && logger.log(`  ✓ Screenshot captured: ${path.basename(fullScreenshotPath)}`);
@@ -594,12 +595,13 @@ async function extractMultipleColoredPixelsHSV(imageBuffer, colorNames, logger) 
     img.threshold({ max: 220, autoGreyscale: false });
     logger && logger.log && logger.log('    ✓ Step 7: Final cleanup (threshold 220)');
     
-    // Save result
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    // Save result (use projectRoot when packaged)
+    const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..', '..');
+    const uploadsDir = path.join(projectRoot, 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
-    
+
     const timestamp = Date.now();
     const colorsStr = colorNames.join('_');
     const outputPath = path.join(uploadsDir, `captcha_masked_${colorsStr}_${timestamp}.png`);
@@ -714,7 +716,8 @@ async function extractColoredPixelsHSV(imageBuffer, colorName, logger) {
     // This helps OCR recognize characters better
     
     // Save to uploads directory instead of temp for debugging
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..', '..');
+    const uploadsDir = path.join(projectRoot, 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }

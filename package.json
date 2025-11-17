@@ -3,12 +3,33 @@
   "version": "0.1.0",
   "description": "Small Express server that controls Puppeteer and uses OpenCV template matching for image-based locators",
   "main": "server.js",
+  "bin": {
+    "puppeteer-automation": "server.js"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build:win": "powershell -ExecutionPolicy Bypass -File build.ps1",
+    "build:standalone": "powershell -ExecutionPolicy Bypass -File build-standalone-with-chrome.ps1",
+    "build:chrome121": "powershell -ExecutionPolicy Bypass -File build-standalone-chrome-121.ps1",
+    "build:all": "npm run build:win",
+    "build:nexe": "powershell -ExecutionPolicy Bypass -File scripts/build_nexe.ps1"
   },
   "author": "",
   "license": "MIT",
+  "pkg": {
+    "scripts": [
+      "server.js",
+      "src/**/**/*.js"
+    ],
+    "assets": [
+      "public/**/*",
+      "src/resources/**/*",
+      "eng.traineddata",
+      "src/main/captcha/templates/**/*",
+      "tools/image_match.py"
+    ]
+  },
   "dependencies": {
     "axios": "^1.13.2",
     "cors": "^2.8.5",
@@ -25,5 +46,9 @@
     "tesseract.js": "^6.0.1",
     "uuid": "^9.0.1",
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "nexe": "^5.0.0-beta.4",
+    "pkg": "^5.8.1"
   }
 }
