@@ -1261,6 +1261,25 @@ function handleRealTimeStats(data) {
             outcomeEl.classList.add('flash-animation');
             setTimeout(() => outcomeEl.classList.remove('flash-animation'), 1500);
         }
+        
+        // Add to bet history
+        addBetToHistory({
+            betAmount: stats.lastBet || 0,
+            eid: stats.lastResult || '-',
+            result: stats.lastOutcome,
+            profit: stats.profitLoss || 0,
+            bankStatus: {
+                L2: stats.L2Bank || 0,
+                L3: stats.L3Bank || 0,
+                L4: stats.L4Bank || 0,
+                L5: stats.L5Bank || 0,
+                L6: stats.L6Bank || 0
+            },
+            currentBetLevel: stats.currentBetLevel || 1,
+            maxBetLevel: stats.maxBetLevel || 5,
+            totalWinAmount: stats.totalWinAmount || 0,
+            totalLossAmount: stats.totalLossAmount || 0
+        });
     }
     
     // Update Last Result
@@ -1493,5 +1512,148 @@ function handleBrowserLog(data) {
     
     addSystemLog(`[Browser] ${data.message}`, level);
 }
+
+// ==================== BET HISTORY MANAGEMENT ====================
+
+const betHistory = [];
+const MAX_HISTORY_ITEMS = 20;
+
+/**
+ * Add bet result to history
+ * @param {Object} betData - Bet result data
+ */
+function addBetToHistory(betData) {
+    const historyItem = {
+        timestamp: new Date(),
+        betAmount: betData.betAmount || 0,
+        eid: betData.eid || '-',
+        result: betData.result || 'unknown', // 'win' or 'loss'
+        profit: betData.profit || 0,
+        bankStatus: betData.bankStatus || {
+            L2: 0, L3: 0, L4: 0, L5: 0, L6: 0
+        },
+        currentBetLevel: betData.currentBetLevel || 1,
+        maxBetLevel: betData.maxBetLevel || 5,
+        totalWinAmount: betData.totalWinAmount || 0,
+        totalLossAmount: betData.totalLossAmount || 0
+    };
+    
+    // Add to beginning of array
+    betHistory.unshift(historyItem);
+    
+    // Keep only last MAX_HISTORY_ITEMS
+    if (betHistory.length > MAX_HISTORY_ITEMS) {
+        betHistory.pop();
+    }
+    
+    // Update UI
+    renderBetHistory();
+}
+
+/**
+ * Render bet history to UI
+ */
+function renderBetHistory() {
+    const container = document.getElementById('betHistoryList');
+    const emptyMessage = document.getElementById('betHistoryEmpty');
+    const countSpan = document.getElementById('historyCount');
+    
+    if (!container) return;
+    
+    // Update count
+    if (countSpan) {
+        countSpan.textContent = betHistory.length;
+    }
+    
+    // Show/hide empty message
+    if (betHistory.length === 0) {
+        if (emptyMessage) emptyMessage.style.display = 'flex';
+        container.innerHTML = '';
+        return;
+    }
+    
+    if (emptyMessage) emptyMessage.style.display = 'none';
+    
+    // Render history items
+    container.innerHTML = betHistory.map((item, index) => {
+        const isWin = item.result === 'win';
+        const profitClass = item.profit >= 0 ? 'profit' : 'loss';
+        const profitSign = item.profit >= 0 ? '+' : '';
+        
+        return `
+            <div class="bet-history-item ${item.result}">
+                <div class="bet-history-header">
+                    <span class="bet-history-time">
+                        🕒 ${formatTime(item.timestamp)}
+                    </span>
+                    <span class="bet-history-result ${item.result}">
+                        ${isWin ? '✅ THẮNG' : '❌ THUA'}
+                    </span>
+                </div>
+                
+                <div class="bet-history-details">
+                    <div class="bet-detail-item">
+                        <span class="bet-detail-label">💰 Số tiền cược:</span>
+                        <span class="bet-detail-value">${item.betAmount.toLocaleString('vi-VN')}đ</span>
+                    </div>
+                    <div class="bet-detail-item">
+                        <span class="bet-detail-label">🎯 EID:</span>
+                        <span class="bet-detail-value">${item.eid}</span>
+                    </div>
+                    <div class="bet-detail-item">
+                        <span class="bet-detail-label">📊 Lợi nhuận:</span>
+                        <span class="bet-detail-value ${profitClass}">
+                            ${profitSign}${item.profit.toLocaleString('vi-VN')}đ
+                        </span>
+                    </div>
+                    <div class="bet-detail-item">
+                        <span class="bet-detail-label">📈 Mức cược:</span>
+                        <span class="bet-detail-value">Mức ${item.currentBetLevel}/${item.maxBetLevel}</span>
+                    </div>
+                </div>
+                
+                <div class="bet-history-bank">
+                    <span class="bank-badge">Bộ 2: ${item.bankStatus.L2}</span>
+                    <span class="bank-badge">Bộ 3: ${item.bankStatus.L3}</span>
+                    <span class="bank-badge">Bộ 4: ${item.bankStatus.L4}</span>
+                    <span class="bank-badge">Bộ 5: ${item.bankStatus.L5}</span>
+                    <span class="bank-badge">Bộ 6: ${item.bankStatus.L6}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Format time for history display
+ * @param {Date} date - Date object
+ * @returns {string} - Formatted time string
+ */
+function formatTime(date) {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Clear bet history
+ */
+function clearBetHistory() {
+    betHistory.length = 0;
+    renderBetHistory();
+}
+
+// Event listener for clear history button
+document.addEventListener('DOMContentLoaded', function() {
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener('click', function() {
+            if (confirm('Bạn có chắc muốn xóa lịch sử đặt cược?')) {
+                clearBetHistory();
+            }
+        });
+    }
+});
 
 

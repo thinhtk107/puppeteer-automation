@@ -75,7 +75,7 @@ app.post('/api/v1/login', async (req, res) => {
     // Parse betAmounts array nếu có, nếu không sử dụng mặc định
     const betAmounts = Array.isArray(loginRequest.betAmounts) && loginRequest.betAmounts.length === 5
       ? loginRequest.betAmounts.map(amt => parseInt(amt) || 500)
-      : [10000, 13000, 25000, 53000, 50000];
+      : [1000, 2000, 5000, 7000, 10000];
 
     const payload = {
       url: loginRequest.url || 'https://v.hit.club/',
