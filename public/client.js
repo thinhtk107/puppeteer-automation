@@ -1593,8 +1593,11 @@ function parseBetResultFromLog(logMessage) {
     // Pattern 2: THUA (Martingale or FixedBet)
     // Example: "SOCKET (Martingale): THUA! Đặt cược EID 2 thất bại. Cược: 1,000đ | Lỗ vòng này: -1,000đ"
     // Example: "SOCKET (FixedBet): THUA! Cược 500đ (EID 2) thất bại. Lỗ vòng này: -500đ"
+    // Example (Martingale): "SOCKET (Martingale): THUA! Cược 2 nhưng kết quả là 5. Cược: 10,000đ | Lỗ vòng này: -10,000đ | Lợi nhuận: -15,000đ"
     const lossPattern1 = /SOCKET \((Martingale|FixedBet)\): THUA! Đặt cược EID (\d+) thất bại\. Cược: ([\d,]+)đ \| Lỗ vòng này: -([\d,]+)đ/;
     const lossPattern2 = /SOCKET \((Martingale|FixedBet)\): THUA! Cược ([\d,]+)đ \(EID (\d+)\) thất bại\. Lỗ vòng này: -([\d,]+)đ/;
+    // Pattern 3: THUA (Martingale with result info) - thêm pattern mới này
+    const lossPattern3 = /SOCKET \((Martingale|FixedBet)\): THUA! Cược (\d+) nhưng kết quả là (?:\d+|Khác)\. Cược: ([\d,]+)đ \| Lỗ vòng này: -([\d,]+)đ/;
     
     let match;
     let betData = null;
@@ -1608,6 +1611,7 @@ function parseBetResultFromLog(logMessage) {
             result: 'win',
             profit: parseInt(match[4].replace(/,/g, ''))
         };
+        console.log('✅ Matched winPattern1 (Martingale/FixedBet WIN):', betData);
     } else if ((match = logMessage.match(winPattern2))) {
         // Pattern 2: "Cược 500đ (EID 2) thành công"
         betData = {
@@ -1616,6 +1620,7 @@ function parseBetResultFromLog(logMessage) {
             result: 'win',
             profit: parseInt(match[4].replace(/,/g, ''))
         };
+        console.log('✅ Matched winPattern2 (Martingale/FixedBet WIN alt format):', betData);
     }
     // Check LOSS patterns
     else if ((match = logMessage.match(lossPattern1))) {
@@ -1626,6 +1631,7 @@ function parseBetResultFromLog(logMessage) {
             result: 'loss',
             profit: -parseInt(match[4].replace(/,/g, ''))
         };
+        console.log('✅ Matched lossPattern1 (Martingale/FixedBet LOSS):', betData);
     } else if ((match = logMessage.match(lossPattern2))) {
         // Pattern 2: "Cược 500đ (EID 2) thất bại"
         betData = {
@@ -1634,6 +1640,21 @@ function parseBetResultFromLog(logMessage) {
             result: 'loss',
             profit: -parseInt(match[4].replace(/,/g, ''))
         };
+        console.log('✅ Matched lossPattern2 (Martingale/FixedBet LOSS alt format):', betData);
+    } else if ((match = logMessage.match(lossPattern3))) {
+        // Pattern 3: "THUA! Cược 2 nhưng kết quả là 5. Cược: 10,000đ | Lỗ vòng này: -10,000đ"
+        betData = {
+            betAmount: parseInt(match[3].replace(/,/g, '')),
+            eid: parseInt(match[2]),
+            result: 'loss',
+            profit: -parseInt(match[4].replace(/,/g, ''))
+        };
+        console.log('✅ Matched lossPattern3 (Martingale LOSS with result info):', betData);
+    } else {
+        // No pattern matched - log for debugging
+        if (logMessage.includes('Martingale') && (logMessage.includes('THẮNG') || logMessage.includes('THUA'))) {
+            console.warn('⚠️ Martingale bet log did NOT match any pattern:', logMessage);
+        }
     }
     
     // If we successfully parsed a bet result, add to history
@@ -1641,22 +1662,28 @@ function parseBetResultFromLog(logMessage) {
         console.log('📜 Parsed bet from log:', betData);
         
         // Create unique hash for this bet to prevent duplicate processing
-        // Add timestamp to make each bet unique even with same amount/eid
-        const betHash = `${betData.betAmount}-${betData.eid}-${betData.result}-${betData.profit}-${Date.now()}`;
-        
-        // Check if we've already processed this exact bet in last 100ms
+        // Use timestamp to make hash more unique and reduce false positives
         const recentHash = `${betData.betAmount}-${betData.eid}-${betData.result}-${betData.profit}`;
+        const now = Date.now();
+        
+        // Check if we've already processed this exact bet very recently (within 200ms)
+        // This prevents duplicate log entries that occur within milliseconds
         if (processedLogCache.has(recentHash)) {
-            console.log('⚠️ Already processed this bet log recently, skipping:', recentHash);
-            return;
+            const lastProcessedTime = processedLogCache.get(recentHash);
+            if (now - lastProcessedTime < 200) {
+                console.log('⚠️ Already processed this bet log recently (< 200ms), skipping:', recentHash);
+                return;
+            }
         }
         
-        // Add to cache with timestamp-based expiry
-        processedLogCache.add(recentHash);
-        // Auto-remove after 500ms to allow new bets with same values
+        // Add to cache with timestamp
+        processedLogCache.set(recentHash, now);
+        
+        // Auto-remove after 300ms to allow new bets with same values
+        // Reduced from 500ms to 300ms for faster refresh
         setTimeout(() => {
             processedLogCache.delete(recentHash);
-        }, 500);
+        }, 300);
         
         // Get current bet level (estimate based on bet amount)
         // Use bettingStats.betAmounts if available, otherwise use default
@@ -1706,7 +1733,7 @@ function parseBetResultFromLog(logMessage) {
 
 const betHistory = [];
 const MAX_HISTORY_ITEMS = 20;
-const processedLogCache = new Set(); // Track processed logs to prevent duplicates
+const processedLogCache = new Map(); // Track processed logs with timestamps to prevent duplicates
 
 /**
  * Add bet result to history
