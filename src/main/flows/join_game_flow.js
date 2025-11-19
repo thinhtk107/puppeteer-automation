@@ -112,7 +112,7 @@ async function joinGameXoc(page, templatesDir, logger, options = {}) {
       throw new Error('Không thể click vào game "XÓC ĐĨA" bằng bất kỳ phương pháp nào');
     }
     
-    await page.waitForTimeout(5000); // Chờ 5s để game load
+    await page.waitForTimeout(8000); // Tăng lên 8s để game load đầy đủ
 
     // Take screenshot for debugging
     await takeFullPageScreenshot(page, logger);
@@ -143,13 +143,14 @@ async function handleInitialPopups(page, templatesDir, logger) {
   logger && logger.log && logger.log('\n--- BƯỚC 5: Đang kiểm tra và dọn dẹp Popups ban đầu ---');
   
   const templateName = 'common_popup_X.png';
-  const maxChecks = 1;
+  const maxChecks = 3; // Tăng số lần kiểm tra lên 3
   let checks = 0;
   const cfg = require('../config/config');
   const templatesMap = buildTemplatesMap(templatesDir);
 
   // Chờ một chút để popup có thời gian xuất hiện
   logger && logger.log && logger.log('⏳ Chờ popup xuất hiện...');
+  await page.waitForTimeout(2000); // Chờ 2 giây trước khi bắt đầu tìm popup
 
   while (checks < maxChecks) {
     checks++;
@@ -164,7 +165,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
         templatesMap,
         templatesDir,
         templateName,
-        2000, // Tăng timeout lên 3s để chờ popup xuất hiện
+        5000, // Tăng timeout lên 5s để chờ popup xuất hiện
         cfg.TEMPLATE_INTERVAL_MS || 500,
         logger
       );
@@ -182,7 +183,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
       await clickAbsolute(page, xButtonCoords.x, xButtonCoords.y, logger);
       logger && logger.log && logger.log('✓ Đã click vào nút X để đóng popup');
 
-      await page.waitForTimeout(1500); // Đợi popup đóng và popup mới xuất hiện (nếu có)
+      await page.waitForTimeout(3000); // Tăng thời gian đợi popup đóng và popup mới xuất hiện lên 3s
       continue; // Kiểm tra tiếp popup khác
     } else {
       logger && logger.log && logger.log(`✗ Không tìm thấy popup nào`);
@@ -296,7 +297,7 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger, options 
       phungClicked = true;
     }
 
-    await page.waitForTimeout(5000); // Chờ 5s để vào sảnh
+    await page.waitForTimeout(8000); // Tăng lên 8s để vào sảnh và load đầy đủ
     logger && logger.log && logger.log('\n✓ HOÀN TẤT QUY TRÌNH VÀO GAME PHỤNG');
     
     // Start real-time statistics broadcasting (non-blocking)

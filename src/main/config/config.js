@@ -8,9 +8,9 @@ module.exports = {
   // Interval between template matching retries
   TEMPLATE_INTERVAL_MS: 1000,  // Tăng từ 500 → 1000
   // Default template match timeout
-  DEFAULT_TEMPLATE_TIMEOUT_MS: 30000,  // Tăng từ 3000 → 15000 (15s)
+  DEFAULT_TEMPLATE_TIMEOUT_MS: 60000,  // Tăng từ 3000 → 15000 (15s)
   // How long to wait for canvas stabilization checks
-  CANVAS_STABILIZE_MS: 3000,  // Tăng từ 2000 → 3000
+  CANVAS_STABILIZE_MS: 5000,  // Tăng từ 2000 → 3000
   // Mouse move steps when moving cursor
   CLICK_STEPS: 8,  // Tăng từ 4 → 8 (smoother)
   // Popup open breathing time

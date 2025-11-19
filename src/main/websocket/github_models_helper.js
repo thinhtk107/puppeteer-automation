@@ -36,7 +36,7 @@ const { createWorker } = require('tesseract.js');
 // GitHub API Keys - Multiple keys with automatic fallback on rate limit
 const GITHUB_TOKENS = [
   process.env.GITHUB_TOKEN,                              // Key 1 (primary)
-  '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'            // Key 2 (fallback)
+  process.env.GITHUB_TOKEN_BK                            // Key 2 (fallback)
 ].filter(Boolean); // Remove empty/undefined keys
 
 let currentTokenIndex = 0; // Track which key is currently being used

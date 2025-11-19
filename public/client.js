@@ -69,11 +69,11 @@ async function handleLoginSubmit(e) {
     
     // Get form data
     const betAmounts = [
-        parseInt(document.getElementById('betAmount1').value) || 10000,
-        parseInt(document.getElementById('betAmount2').value) || 13000,
-        parseInt(document.getElementById('betAmount3').value) || 25000,
-        parseInt(document.getElementById('betAmount4').value) || 53000,
-        parseInt(document.getElementById('betAmount5').value) || 50000
+        parseInt(document.getElementById('betAmount1').value) || 1000,
+        parseInt(document.getElementById('betAmount2').value) || 5000,
+        parseInt(document.getElementById('betAmount3').value) || 10000,
+        parseInt(document.getElementById('betAmount4').value) || 10000,
+        parseInt(document.getElementById('betAmount5').value) || 10000
     ];
     
     const formData = {
@@ -124,6 +124,11 @@ async function handleLoginSubmit(e) {
             currentLossStreak: 0,
             maxWinStreak: 0,
             maxLossStreak: 0,
+            L2Bank: 0,
+            L3Bank: 0,
+            L4Bank: 0,
+            L5Bank: 0,
+            L6Bank: 0,
             history: []
         },
         logs: []
@@ -786,12 +791,39 @@ function updateBettingStatsDisplay() {
         lossCountEl.textContent = bettingStats.lossCount;
     }
     if (totalProfitEl) {
-        const profit = bettingStats.totalProfit;
+        // Tính lợi nhuận = Tổng tiền thắng - Tổng tiền thua
+        const profit = (bettingStats.totalWinAmount || 0) - (bettingStats.totalLossAmount || 0);
         totalProfitEl.textContent = (profit >= 0 ? '+' : '') + profit.toLocaleString('vi-VN');
         totalProfitEl.className = 'stat-value ' + (profit >= 0 ? 'positive' : 'negative');
     }
     if (totalBetsEl) {
         totalBetsEl.textContent = bettingStats.totalBets;
+    }
+    
+    // Update next bet amount
+    const nextBetEl = document.getElementById('nextBetAmount');
+    if (nextBetEl && bettingStats.betAmounts && bettingStats.currentBetLevel !== undefined) {
+        const nextLevel = bettingStats.currentBetLevel;
+        if (nextLevel >= 0 && nextLevel < bettingStats.betAmounts.length) {
+            const nextBetAmount = bettingStats.betAmounts[nextLevel];
+            nextBetEl.textContent = nextBetAmount.toLocaleString('vi-VN') + 'đ';
+            nextBetEl.className = 'stat-value';
+            
+            // Highlight if higher than base bet
+            if (nextBetAmount > bettingStats.baseBetAmount) {
+                nextBetEl.classList.add('bet-doubled');
+            } else {
+                nextBetEl.classList.remove('bet-doubled');
+            }
+        }
+    }
+    
+    // Update bet level info
+    const betLevelInfoEl = document.getElementById('betLevelInfo');
+    if (betLevelInfoEl && bettingStats.currentBetLevel !== undefined && bettingStats.betAmounts) {
+        const currentLevel = bettingStats.currentBetLevel + 1; // Display as 1-5 instead of 0-4
+        const maxLevel = bettingStats.betAmounts.length;
+        betLevelInfoEl.textContent = `Mức ${currentLevel}/${maxLevel}`;
     }
     
     // Update runtime
@@ -1043,6 +1075,24 @@ function handleBettingStatistics(data) {
     if (data.maxLossStreak !== undefined) {
         bettingStats.maxLossStreak = data.maxLossStreak;
     }
+    
+    // Update last bet information for history tracking
+    if (data.lastBet !== undefined) {
+        bettingStats.lastBet = data.lastBet;
+    }
+    if (data.lastOutcome !== undefined) {
+        bettingStats.lastOutcome = data.lastOutcome;
+    }
+    if (data.lastResult !== undefined) {
+        bettingStats.lastResult = data.lastResult;
+    }
+    if (data.currentBetLevel !== undefined) {
+        bettingStats.currentBetLevel = data.currentBetLevel;
+    }
+    if (data.maxBetLevel !== undefined) {
+        bettingStats.maxBetLevel = data.maxBetLevel;
+    }
+    
     console.log('📊 Updated bettingStats:', bettingStats);
     updateBettingStatsDisplay();
     updateAdvancedStats(data);
@@ -1203,30 +1253,51 @@ function handleRealTimeStats(data) {
     }
     
     // Update Next Bet Amount and Bet Level
-    if (stats.nextBetAmount !== undefined) {
-        const nextBetEl = document.getElementById('nextBetAmount');
-        const betLevelInfoEl = document.getElementById('betLevelInfo');
-        if (nextBetEl) {
-            nextBetEl.textContent = stats.nextBetAmount.toLocaleString('vi-VN') + 'đ';
+    const nextBetEl = document.getElementById('nextBetAmount');
+    const betLevelInfoEl = document.getElementById('betLevelInfo');
+    const bettingStats = getActiveStats();
+    
+    if (nextBetEl && bettingStats) {
+        let nextBetAmount = 0;
+        
+        // Nếu server gửi nextBetAmount, dùng nó
+        if (stats.nextBetAmount !== undefined) {
+            nextBetAmount = stats.nextBetAmount;
+        }
+        // Nếu không, tính dựa trên currentBetLevel và betAmounts
+        else if (bettingStats.betAmounts && bettingStats.currentBetLevel !== undefined) {
+            // currentBetLevel là index (0-4), lấy số tiền từ mảng
+            const nextLevel = bettingStats.currentBetLevel;
+            if (nextLevel >= 0 && nextLevel < bettingStats.betAmounts.length) {
+                nextBetAmount = bettingStats.betAmounts[nextLevel];
+            }
+        }
+        // Fallback cuối cùng
+        else if (stats.currentBetAmount !== undefined) {
+            nextBetAmount = stats.currentBetAmount;
+        } else if (bettingStats.currentBetAmount !== undefined) {
+            nextBetAmount = bettingStats.currentBetAmount;
+        }
+        
+        // Hiển thị số tiền
+        if (nextBetAmount > 0) {
+            nextBetEl.textContent = nextBetAmount.toLocaleString('vi-VN') + 'đ';
             nextBetEl.className = 'stat-value';
             
             // Highlight if doubled (Martingale)
-            const bettingStats = getActiveStats();
-            if (bettingStats && stats.nextBetAmount > bettingStats.baseBetAmount) {
+            if (nextBetAmount > bettingStats.baseBetAmount) {
                 nextBetEl.classList.add('bet-doubled');
             }
         }
+    }
+    
+    // Update bet level info
+    if (betLevelInfoEl && bettingStats) {
+        const currentLevel = stats.currentBetLevel !== undefined ? stats.currentBetLevel : bettingStats.currentBetLevel;
+        const maxLevel = stats.maxBetLevel !== undefined ? stats.maxBetLevel : (bettingStats.betAmounts ? bettingStats.betAmounts.length : 5);
         
-        // Update bet level info
-        if (betLevelInfoEl && stats.currentBetLevel !== undefined && stats.maxBetLevel !== undefined) {
-            betLevelInfoEl.textContent = `Mức ${stats.currentBetLevel}/${stats.maxBetLevel}`;
-        }
-    } else if (stats.currentBetAmount !== undefined) {
-        // Fallback to currentBetAmount if nextBetAmount not available
-        const nextBetEl = document.getElementById('nextBetAmount');
-        if (nextBetEl) {
-            nextBetEl.textContent = stats.currentBetAmount.toLocaleString('vi-VN') + 'đ';
-            nextBetEl.className = 'stat-value';
+        if (currentLevel !== undefined) {
+            betLevelInfoEl.textContent = `Mức ${currentLevel + 1}/${maxLevel}`;
         }
     }
     
@@ -1262,24 +1333,9 @@ function handleRealTimeStats(data) {
             setTimeout(() => outcomeEl.classList.remove('flash-animation'), 1500);
         }
         
-        // Add to bet history
-        addBetToHistory({
-            betAmount: stats.lastBet || 0,
-            eid: stats.lastResult || '-',
-            result: stats.lastOutcome,
-            profit: stats.profitLoss || 0,
-            bankStatus: {
-                L2: stats.L2Bank || 0,
-                L3: stats.L3Bank || 0,
-                L4: stats.L4Bank || 0,
-                L5: stats.L5Bank || 0,
-                L6: stats.L6Bank || 0
-            },
-            currentBetLevel: stats.currentBetLevel || 1,
-            maxBetLevel: stats.maxBetLevel || 5,
-            totalWinAmount: stats.totalWinAmount || 0,
-            totalLossAmount: stats.totalLossAmount || 0
-        });
+        // NOTE: Bet history is now added via parseBetResultFromLog() in handleBrowserLog()
+        // This prevents duplicate entries. The log parsing method is more reliable and has complete data.
+        // DO NOT add bet history here anymore to avoid duplicates!
     }
     
     // Update Last Result
@@ -1511,18 +1567,175 @@ function handleBrowserLog(data) {
     }
     
     addSystemLog(`[Browser] ${data.message}`, level);
+    
+    // Parse bet result from browser logs to add to history
+    parseBetResultFromLog(data.message);
+}
+
+// Parse bet result from browser log and add to history
+function parseBetResultFromLog(logMessage) {
+    if (!logMessage) return;
+    
+    const bettingStats = getActiveStats();
+    if (!bettingStats) return;
+    
+    // Debug: Log all messages that contain bet-related keywords
+    if (logMessage.includes('THẮNG') || logMessage.includes('THUA')) {
+        console.log('🔍 [DEBUG] Checking bet log:', logMessage);
+    }
+    
+    // Pattern 1: THẮNG (Martingale or FixedBet)
+    // Example: "SOCKET (Martingale): THẮNG! Đặt cược EID 2 thành công. Cược: 1,000đ | Lãi vòng này: +980đ"
+    // Example: "SOCKET (FixedBet): THẮNG! Cược 500đ (EID 2) thành công. Lãi vòng này: +490đ"
+    const winPattern1 = /SOCKET \((Martingale|FixedBet)\): THẮNG! Đặt cược EID (\d+) thành công\. Cược: ([\d,]+)đ \| Lãi vòng này: \+([\d,]+)đ/;
+    const winPattern2 = /SOCKET \((Martingale|FixedBet)\): THẮNG! Cược ([\d,]+)đ \(EID (\d+)\) thành công\. Lãi vòng này: \+([\d,]+)đ/;
+    
+    // Pattern 2: THUA (Martingale or FixedBet)
+    // Example: "SOCKET (Martingale): THUA! Đặt cược EID 2 thất bại. Cược: 1,000đ | Lỗ vòng này: -1,000đ"
+    // Example: "SOCKET (FixedBet): THUA! Cược 500đ (EID 2) thất bại. Lỗ vòng này: -500đ"
+    const lossPattern1 = /SOCKET \((Martingale|FixedBet)\): THUA! Đặt cược EID (\d+) thất bại\. Cược: ([\d,]+)đ \| Lỗ vòng này: -([\d,]+)đ/;
+    const lossPattern2 = /SOCKET \((Martingale|FixedBet)\): THUA! Cược ([\d,]+)đ \(EID (\d+)\) thất bại\. Lỗ vòng này: -([\d,]+)đ/;
+    
+    let match;
+    let betData = null;
+    
+    // Check WIN patterns
+    if ((match = logMessage.match(winPattern1))) {
+        // Pattern 1: "Đặt cược EID 2 thành công. Cược: 1,000đ"
+        betData = {
+            betAmount: parseInt(match[3].replace(/,/g, '')),
+            eid: parseInt(match[2]),
+            result: 'win',
+            profit: parseInt(match[4].replace(/,/g, ''))
+        };
+    } else if ((match = logMessage.match(winPattern2))) {
+        // Pattern 2: "Cược 500đ (EID 2) thành công"
+        betData = {
+            betAmount: parseInt(match[2].replace(/,/g, '')),
+            eid: parseInt(match[3]),
+            result: 'win',
+            profit: parseInt(match[4].replace(/,/g, ''))
+        };
+    }
+    // Check LOSS patterns
+    else if ((match = logMessage.match(lossPattern1))) {
+        // Pattern 1: "Đặt cược EID 2 thất bại. Cược: 1,000đ"
+        betData = {
+            betAmount: parseInt(match[3].replace(/,/g, '')),
+            eid: parseInt(match[2]),
+            result: 'loss',
+            profit: -parseInt(match[4].replace(/,/g, ''))
+        };
+    } else if ((match = logMessage.match(lossPattern2))) {
+        // Pattern 2: "Cược 500đ (EID 2) thất bại"
+        betData = {
+            betAmount: parseInt(match[2].replace(/,/g, '')),
+            eid: parseInt(match[3]),
+            result: 'loss',
+            profit: -parseInt(match[4].replace(/,/g, ''))
+        };
+    }
+    
+    // If we successfully parsed a bet result, add to history
+    if (betData) {
+        console.log('📜 Parsed bet from log:', betData);
+        
+        // Create unique hash for this bet to prevent duplicate processing
+        // Add timestamp to make each bet unique even with same amount/eid
+        const betHash = `${betData.betAmount}-${betData.eid}-${betData.result}-${betData.profit}-${Date.now()}`;
+        
+        // Check if we've already processed this exact bet in last 100ms
+        const recentHash = `${betData.betAmount}-${betData.eid}-${betData.result}-${betData.profit}`;
+        if (processedLogCache.has(recentHash)) {
+            console.log('⚠️ Already processed this bet log recently, skipping:', recentHash);
+            return;
+        }
+        
+        // Add to cache with timestamp-based expiry
+        processedLogCache.add(recentHash);
+        // Auto-remove after 500ms to allow new bets with same values
+        setTimeout(() => {
+            processedLogCache.delete(recentHash);
+        }, 500);
+        
+        // Get current bet level (estimate based on bet amount)
+        // Use bettingStats.betAmounts if available, otherwise use default
+        const betAmounts = bettingStats.betAmounts || [1000, 5000, 10000, 10000, 10000];
+        let currentBetLevel = betAmounts.indexOf(betData.betAmount) + 1;
+        if (currentBetLevel === 0) currentBetLevel = 1; // Default if not found
+        
+        addBetToHistory({
+            betAmount: betData.betAmount,
+            eid: betData.eid,
+            result: betData.result,
+            profit: betData.profit,
+            bankStatus: {
+                L2: bettingStats.L2Bank || 0,
+                L3: bettingStats.L3Bank || 0,
+                L4: bettingStats.L4Bank || 0,
+                L5: bettingStats.L5Bank || 0,
+                L6: bettingStats.L6Bank || 0
+            },
+            currentBetLevel: currentBetLevel,
+            maxBetLevel: 5,
+            totalWinAmount: bettingStats.totalWinAmount || 0,
+            totalLossAmount: bettingStats.totalLossAmount || 0
+        });
+    }
+    
+    // Parse bank status updates from logs
+    // Example: "SOCKET (Bank): +1 Bộ 2. Tổng: 3"
+    const bankUpdatePattern = /SOCKET \(Bank\): [+\-]?\d+ Bộ (\d+)\. Tổng: (\d+)/;
+    const bankMatch = logMessage.match(bankUpdatePattern);
+    if (bankMatch) {
+        const bankLevel = parseInt(bankMatch[1]);
+        const bankCount = parseInt(bankMatch[2]);
+        
+        // Update bettingStats bank count
+        if (bankLevel === 2) bettingStats.L2Bank = bankCount;
+        else if (bankLevel === 3) bettingStats.L3Bank = bankCount;
+        else if (bankLevel === 4) bettingStats.L4Bank = bankCount;
+        else if (bankLevel === 5) bettingStats.L5Bank = bankCount;
+        else if (bankLevel === 6) bettingStats.L6Bank = bankCount;
+        
+        console.log(`📊 Updated Bank L${bankLevel}: ${bankCount}`);
+    }
 }
 
 // ==================== BET HISTORY MANAGEMENT ====================
 
 const betHistory = [];
 const MAX_HISTORY_ITEMS = 20;
+const processedLogCache = new Set(); // Track processed logs to prevent duplicates
 
 /**
  * Add bet result to history
  * @param {Object} betData - Bet result data
  */
 function addBetToHistory(betData) {
+    // Skip if bet amount is 0 or invalid
+    if (!betData.betAmount || betData.betAmount === 0) {
+        console.log('⚠️ Invalid bet amount (0đ), skipping:', betData);
+        return;
+    }
+    
+    // Check if the LAST item in history is EXACTLY the same within 1 second
+    // This catches ONLY true duplicates from immediate double-calls
+    if (betHistory.length > 0) {
+        const lastItem = betHistory[0]; // First item (most recent)
+        const timeDiff = Date.now() - lastItem.timestamp.getTime();
+        
+        // Only consider it a duplicate if ALL values match AND it happened within 1 second
+        if (timeDiff < 1000 &&
+            lastItem.betAmount === betData.betAmount &&
+            lastItem.eid === betData.eid &&
+            lastItem.result === betData.result &&
+            lastItem.profit === betData.profit) {
+            console.log('⚠️ Exact duplicate within 1s detected, skipping:', betData);
+            return; // Skip duplicate
+        }
+    }
+    
     const historyItem = {
         timestamp: new Date(),
         betAmount: betData.betAmount || 0,
@@ -1537,6 +1750,8 @@ function addBetToHistory(betData) {
         totalWinAmount: betData.totalWinAmount || 0,
         totalLossAmount: betData.totalLossAmount || 0
     };
+    
+    console.log('✅ Adding bet to history:', historyItem);
     
     // Add to beginning of array
     betHistory.unshift(historyItem);
