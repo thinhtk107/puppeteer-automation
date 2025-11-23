@@ -15,7 +15,7 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
   
   // Overall timeout protection
   const cfg = require('../config/config');
-  const overallTimeout = 120000; // 2 minutes total
+  const overallTimeout = 180000; // Tăng lên 3 phút (180 giây)
   const startTime = Date.now();
   
   const checkTimeout = () => {
@@ -27,20 +27,48 @@ async function performFullLoginViaImages(page, templatesMap, templatesDir, login
   try {
   const cfg = require('../config/config');
   
-  await page.waitForTimeout(1500);
+  // Tăng thời gian chờ ban đầu để page load đầy đủ
+  await page.waitForTimeout(3000);
   
   checkTimeout();
   
-  logStep('Tìm nút đăng nhập...');
-  const btnCoords = await waitForTemplate(page, templatesMap, templatesDir, 'button_login.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
-    if (!btnCoords) throw new Error('Không tìm thấy nút đăng nhập');
+  // CHỜ ĐẾN KHI THẤY BUTTON LOGIN
+  logStep('Đang chờ nút đăng nhập xuất hiện...');
+  let btnCoords = null;
+  const maxWaitForButton = 120000; // Chờ tối đa 2 phút để button xuất hiện
+  const buttonStartTime = Date.now();
+  
+  while (!btnCoords && (Date.now() - buttonStartTime < maxWaitForButton)) {
+    btnCoords = await waitForTemplate(
+      page, 
+      templatesMap, 
+      templatesDir, 
+      'button_login.png', 
+      10000, // Mỗi lần thử timeout 10 giây
+      cfg.TEMPLATE_INTERVAL_MS, 
+      logger
+    );
+    
+    if (!btnCoords) {
+      const elapsed = Math.floor((Date.now() - buttonStartTime) / 1000);
+      logger && logger.log && logger.log(`   ⏳ Chưa thấy nút đăng nhập (đã chờ ${elapsed}s)... Thử lại...`);
+      await page.waitForTimeout(2000); // Đợi 2 giây trước khi thử lại
+    } else {
+      logger && logger.log && logger.log(`   ✅ Đã tìm thấy nút đăng nhập!`);
+    }
+  }
+  
+  if (!btnCoords) {
+    throw new Error(`Không tìm thấy nút đăng nhập sau ${Math.floor(maxWaitForButton / 1000)}s`);
+  }
     
     logStep('Click nút đăng nhập');
     const { clickAbsolute } = require('../helpers/click_helper');
     await clickAbsolute(page, btnCoords.x, btnCoords.y, logger);
     
-    await page.waitForTimeout(1000);
-    
+    // Tăng thời gian chờ popup hiển thị
+    await page.waitForTimeout(2500);
+  
   logStep('Chờ popup đăng nhập hiển thị');
   const popupUcoords = await waitForTemplate(page, templatesMap, templatesDir, 'username_field.png', cfg.DEFAULT_TEMPLATE_TIMEOUT_MS, cfg.TEMPLATE_INTERVAL_MS, logger);
     if (!popupUcoords) throw new Error('Popup đăng nhập không hiển thị');

@@ -15,8 +15,57 @@ const sessionManager = require('./session_manager');
 
 // ===== GOLOGIN DISABLED =====
 /**
- * Load GoLogin dynamically (ESM module)
- */
+ * Load GoLogin dynamically (ESM     // Final wait for any remaining animations/transitions
+    logger.log('⏳ Chờ animations/transitions hoàn tất...');
+    await page.waitForTimeout(1500);
+    
+    logger.log('═══════════════════════════════════════════════════════');
+    logger.log('🔍 KIỂM TRA PAGE LOAD VÀ BUTTON LOGIN');
+    logger.log('═══════════════════════════════════════════════════════');
+    
+    // ĐỢI PAGE LOAD HOÀN TOÀN TRƯỚC
+    logger.log('⏳ Đợi page load hoàn toàn (networkidle, domcontentloaded)...');
+    try {
+      await page.waitForNetworkIdle({ timeout: 30000, idleTime: 2000 });
+      logger.log('✅ Network idle - page đã load xong');
+    } catch (e) {
+      logger.warn('⚠️ Network không idle sau 30s, tiếp tục...');
+    }
+    
+    // Đợi thêm để đảm bảo UI render xong
+    await page.waitForTimeout(3000);
+    logger.log('✅ Đã đợi thêm 3s để UI render');
+    
+    // Kiểm tra xem có đang trong loading state không
+    const isLoading = await page.evaluate(() => {
+      // Check loading text
+      const loadingText = document.body.innerText;
+      if (loadingText.includes('ĐANG TẢI') || loadingText.includes('LOADING')) {
+        return true;
+      }
+      
+      // Check loading spinner/overlay
+      const loadingElements = document.querySelectorAll('[class*="loading"], [class*="spinner"]');
+      for (const el of loadingElements) {
+        const style = window.getComputedStyle(el);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
+    if (isLoading) {
+      logger.log('⏳ Page vẫn đang loading, chờ thêm...');
+      await page.waitForTimeout(5000);
+    }
+    
+    // Chờ đến khi button login xuất hiện trước khi bắt đầu login flow
+    const { waitForTemplate } = require('./helpers/matcher_helper');
+    const cfg = require('./config/config');
+    
+    logger.log('⏳ Đang chờ button login (button_login.png) xuất hiện...');
 /*
 async function loadGoLogin() {
   if (!GoLogin) {
@@ -360,43 +409,6 @@ async function runAutomation(payload, uploadedFiles) {
     try {
       const text = msg.text();
       
-      // === DETECT ROOM EXIT ERROR AND RE-JOIN ===
-      if (text.includes("Can't find letter definition") || text.includes("myriadpro.png")) {
-        logger.warn('⚠️ Phát hiện lỗi thoát khỏi phòng! Đang vào lại game...');
-        
-        // Trigger re-join game asynchronously
-        (async () => {
-          try {
-            await page.waitForTimeout(2000); // Đợi 2s cho ổn định
-            
-            logger.log('🎮 Đang click vào game phụng để vào lại...');
-            const { clickPhungGame } = require('./flows/join_game_flow');
-            const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..');
-            const templatesDir = path.join(projectRoot, 'uploads');
-            
-            // Build templates map from resources
-            const resourcesDir = path.join(__dirname, '..', 'resources');
-            const templatesMap = {};
-            if (fs.existsSync(resourcesDir)) {
-              for (const fn of fs.readdirSync(resourcesDir)) {
-                templatesMap[fn] = path.join(resourcesDir, fn);
-              }
-            }
-            
-            // Just click Phung game to rejoin the room
-            await clickPhungGame(page, templatesDir, templatesMap, logger, {
-              baseBetAmount: payload.baseBetAmount || 500
-            });
-            
-            logger.log('✅ Đã click vào game phụng thành công!');
-          } catch (rejoinErr) {
-            logger.error('❌ Lỗi khi vào lại game:', rejoinErr.message);
-          }
-        })();
-        
-        return; // Don't log the error details
-      }
-      
       // === HANDLE BETTING EVENTS ===
       if (text.startsWith('[BET_EVENT]')) {
         try {
@@ -614,7 +626,6 @@ async function runAutomation(payload, uploadedFiles) {
     
     // ===== FINAL VERIFICATION BEFORE LOGIN =====
     logger.log('⏳ Chờ thêm để đảm bảo trang hoàn toàn ổn định...');
-    await page.waitForTimeout(3000);
     
     // Verify page is still responsive
     try {
@@ -663,7 +674,75 @@ async function runAutomation(payload, uploadedFiles) {
     await page.waitForTimeout(1500);
     
     logger.log('═══════════════════════════════════════════════════════');
-    logger.log('🚀 BẮT ĐẦU LOGIN FLOW');
+    logger.log('� KIỂM TRA BUTTON LOGIN TRƯỚC KHI BẮT ĐẦU');
+    logger.log('═══════════════════════════════════════════════════════');
+    
+    // Chờ đến khi button login xuất hiện trước khi bắt đầu login flow
+    const { waitForTemplate } = require('./helpers/matcher_helper');
+    const cfg = require('./config/config');
+    
+    logger.log('⏳ Đang chờ button login (button_login.png) xuất hiện...');
+    let buttonFound = false;
+    const maxWaitTime = 120000; // 2 phút
+    const startWaitTime = Date.now();
+    
+    while (!buttonFound && (Date.now() - startWaitTime < maxWaitTime)) {
+      const btnCoords = await waitForTemplate(
+        page,
+        templatesMap,
+        templatesDir,
+        'button_login.png',
+        15000, // Mỗi lần thử 10 giây
+        cfg.TEMPLATE_INTERVAL_MS,
+        logger
+      );
+      
+      if (btnCoords) {
+        // VALIDATION: Kiểm tra xem page đã thực sự sẵn sàng chưa
+        logger.log(`   🔍 Tìm thấy button tại (${btnCoords.x}, ${btnCoords.y}), đang validate...`);
+        
+        // Check 1: Page không còn loading
+        const stillLoading = await page.evaluate(() => {
+          const text = document.body.innerText;
+          return text.includes('ĐANG TẢI') || text.includes('LOADING') || text.includes('%');
+        });
+        
+        if (stillLoading) {
+          logger.log(`   ⚠️ Page vẫn đang loading, chờ thêm...`);
+          await page.waitForTimeout(3000);
+          continue; // Thử lại
+        }
+        
+        // Check 2: Canvas đã load
+        const canvasReady = await page.evaluate(() => {
+          const canvas = document.querySelector('#GameCanvas');
+          return canvas && canvas.width > 0 && canvas.height > 0;
+        });
+        
+        if (!canvasReady) {
+          logger.log(`   ⚠️ Canvas chưa sẵn sàng, chờ thêm...`);
+          await page.waitForTimeout(2000);
+          continue; // Thử lại
+        }
+        
+        // Check 3: Đợi thêm một chút để chắc chắn UI đã stable
+        await page.waitForTimeout(2000);
+        
+        buttonFound = true;
+        logger.log('✅ Button login đã xuất hiện và page đã sẵn sàng! Bắt đầu login flow...');
+      } else {
+        const elapsed = Math.floor((Date.now() - startWaitTime) / 1000);
+        logger.log(`   ⏳ Chưa thấy button login (đã chờ ${elapsed}s)... Thử lại...`);
+        await page.waitForTimeout(2000);
+      }
+    }
+    
+    if (!buttonFound) {
+      throw new Error(`Timeout: Không tìm thấy button login sau ${Math.floor(maxWaitTime / 1000)}s`);
+    }
+    
+    logger.log('═══════════════════════════════════════════════════════');
+    logger.log('�🚀 BẮT ĐẦU LOGIN FLOW');
     logger.log('═══════════════════════════════════════════════════════');
     
     const loginRes = await performFullLoginViaImages(page, templatesMap, templatesDir, payload.loginRequest, logger);
@@ -683,8 +762,7 @@ async function runAutomation(payload, uploadedFiles) {
       } else {
         // Wait additional time for login to fully complete and game to load
         logger.log('✓ Login successful, waiting for game to fully load...');
-        await page.waitForTimeout(5000); // Wait 5 seconds for game to stabilize
-        
+      
         // Verify login popup is closed by checking if it's no longer visible
         try {
           logger.log('Verifying login popup is closed...');
@@ -746,6 +824,98 @@ async function runAutomation(payload, uploadedFiles) {
             logger.warn('⚠️ Lỗi khi check WebSocket:', wsError.message);
           }
         }                
+        // CHỜ PAGE LOAD XONG TRƯỚC KHI JOIN GAME
+        logger.log('═══════════════════════════════════════════════════════');
+        logger.log('🔍 KIỂM TRA PAGE LOAD TRƯỚC KHI VÀO GAME');
+        logger.log('═══════════════════════════════════════════════════════');
+        
+        // Đợi page load hoàn toàn
+        logger.log('⏳ Đợi page load hoàn toàn sau login...');
+        try {
+          await page.waitForNetworkIdle({ timeout: 10000, idleTime: 1000 }); // Giảm từ 30s → 10s, idleTime 2s → 1s
+          logger.log('✅ Network idle - page đã load xong');
+        } catch (e) {
+          logger.warn('⚠️ Network không idle sau 10s, tiếp tục...');
+        }
+        
+        // Đợi thêm để UI render
+        await page.waitForTimeout(500); // Giảm từ 1000ms → 500ms
+        logger.log('✅ Đã đợi thêm 0.5s để UI render');
+
+        // CHỜ ĐẾN KHI GAME CANVAS SẴN SÀNG (thay vì chờ taigame.png biến mất)
+        logger.log('⏳ Đang chờ game canvas sẵn sàng...');
+        let gameReady = false;
+        const maxWaitPopup = 10000; // Giảm từ 15s → 10s
+        const startWaitPopup = Date.now();
+        
+        while (!gameReady && (Date.now() - startWaitPopup < maxWaitPopup)) {
+          // Kiểm tra game canvas đã sẵn sàng
+          const canvasOk = await page.evaluate(() => {
+            const canvas = document.querySelector('#GameCanvas');
+            if (!canvas) return false;
+            
+            // Kiểm tra canvas có kích thước hợp lệ
+            if (canvas.width <= 0 || canvas.height <= 0) return false;
+            
+            // Kiểm tra không có popup login (kiểm tra bằng text thay vì ảnh)
+            const bodyText = document.body.innerText || '';
+            const hasLoginPopup = bodyText.includes('Tải Game') || 
+                                 bodyText.includes('ĐANG TẢI GAME') ||
+                                 bodyText.includes('Phiên bản');
+            
+            return !hasLoginPopup;
+          });
+          
+          if (!canvasOk) {
+            const elapsed = Math.floor((Date.now() - startWaitPopup) / 1000);
+            logger.log(`   ⏳ Game chưa sẵn sàng (đã chờ ${elapsed}s)... Đợi thêm...`);
+            await page.waitForTimeout(1000); // Giảm từ 2000ms → 1000ms
+          } else {
+            logger.log('✅ Game canvas đã sẵn sàng!');
+            gameReady = true;
+          }
+        }
+        
+        if (!gameReady) {
+          logger.warn(`⚠️ Game chưa sẵn sàng sau ${Math.floor(maxWaitPopup / 1000)}s, tiếp tục anyway...`);
+        }
+        
+        // VALIDATION THÊM: Kiểm tra game đã sẵn sàng
+        logger.log('🔍 Kiểm tra game đã sẵn sàng...');
+        
+        // Check 1: Canvas đã load
+        const canvasReady = await page.evaluate(() => {
+          const canvas = document.querySelector('#GameCanvas');
+          return canvas && canvas.width > 0 && canvas.height > 0;
+        });
+        
+        if (!canvasReady) {
+          logger.log('⚠️ Canvas chưa sẵn sàng, đợi thêm...');
+          await page.waitForTimeout(1000); // Giảm từ 2000ms → 1000ms
+        } else {
+          logger.log('✅ Canvas đã sẵn sàng');
+        }
+        
+        // // Check 2: Không còn loading text
+        // const stillLoading = await page.evaluate(() => {
+        //   const text = document.body.innerText;
+        //   return text.includes('ĐANG TẢI') || text.includes('LOADING') || text.includes('%');
+        // });
+        
+        // if (stillLoading) {
+        //   logger.log('⚠️ Page vẫn đang loading, đợi thêm...');
+        //   await page.waitForTimeout(5000);
+        // } else {
+        //   logger.log('✅ Page không còn loading');
+        // }
+        
+        // // Đợi thêm để chắc chắn UI stable
+        // await page.waitForTimeout(2000);
+        
+        logger.log('═══════════════════════════════════════════════════════');
+        logger.log('🎮 BẮT ĐẦU JOIN GAME FLOW');
+        logger.log('═══════════════════════════════════════════════════════');
+        
         // Now execute join game flow
         logger.log('Starting join game flow...');
         try {
@@ -767,6 +937,55 @@ async function runAutomation(payload, uploadedFiles) {
           await joinGameXoc(page, templatesDir, logger, options);
           logger.log('✓ joinGameXoc completed successfully');
           results.push({ flow: 'joinGameXoc', status: 'success' });
+          
+          // ═══════════════════════════════════════════════════════
+          // ⚡ SETUP ROOM EXIT DETECTION (SAU KHI VÀO GAME HOÀN THÀNH)
+          // ═══════════════════════════════════════════════════════
+          logger.log('🔧 Thiết lập tự động vào lại game khi bị thoát phòng...');
+          
+          // Add console listener for room exit detection AFTER joining game
+          page.on('console', async (msg) => {
+            try {
+              const text = msg.text();
+              
+              // Detect room exit errors
+              if (text.includes("Can't find letter definition") || text.includes("myriadpro.png")) {
+                logger.warn('⚠️ Phát hiện lỗi thoát khỏi phòng! Đang vào lại game...');
+                
+                try {
+                  await page.waitForTimeout(3000); // Đợi 3s cho ổn định
+
+                  logger.log('🎮 Đang click vào game phụng để vào lại...');
+                  const { clickPhungGame } = require('./flows/join_game_flow');
+                  const projectRoot = process.env.PROJECT_ROOT || path.join(__dirname, '..');
+                  const templatesDir = path.join(projectRoot, 'uploads');
+                  
+                  // Build templates map from resources
+                  const resourcesDir = path.join(__dirname, '..', 'resources');
+                  const templatesMap = {};
+                  if (fs.existsSync(resourcesDir)) {
+                    for (const fn of fs.readdirSync(resourcesDir)) {
+                      templatesMap[fn] = path.join(resourcesDir, fn);
+                    }
+                  }
+                  
+                  // Just click Phung game to rejoin the room
+                  await clickPhungGame(page, templatesDir, templatesMap, logger, {
+                    baseBetAmount: payload.baseBetAmount || 500
+                  });
+                  
+                  logger.log('✅ Đã click vào game phụng thành công!');
+                } catch (rejoinErr) {
+                  logger.error('❌ Lỗi khi vào lại game:', rejoinErr.message);
+                }
+              }
+            } catch (e) {
+              // Ignore errors in room exit detection
+            }
+          });
+          
+          logger.log('✅ Đã thiết lập auto-rejoin khi bị thoát phòng');
+          
         } catch (err) {
           logger.error('✗ Join game xoc failed:', err.message);
           logger.error('Stack trace:', err.stack);

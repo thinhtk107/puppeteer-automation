@@ -295,8 +295,8 @@ async function locateCaptchaImage(page, captchaFieldCoords, outputDir, logger) {
     
     // Strategy 0: PRIMARY - Locate captcha area giữa input field và refresh button
     try {
-      const inputTplPath = path.join(__dirname, '..', 'resources', 'captcha_field_input_popup.png');
-      const refreshTplPath = path.join(__dirname, '..', 'resources', 'refresh.png');
+      const inputTplPath = path.join(__dirname, '..', '..', 'resources', 'captcha_field_input_popup.png');
+      const refreshTplPath = path.join(__dirname, '..', '..', 'resources', 'refresh.png');
       
       if (fs.existsSync(inputTplPath) && fs.existsSync(refreshTplPath)) {
         const fullScreenshotPath = path.join(outputDir, `captcha_full_${Date.now()}.png`);

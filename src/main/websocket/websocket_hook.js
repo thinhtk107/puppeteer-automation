@@ -11,8 +11,9 @@
  */
 async function setupWebSocketHook(page, logger, options = {}) {
   try {
-    // Lấy baseBet, sessionId và showStatsOnScreen từ options
+    // Lấy baseBet, betAmounts, sessionId và showStatsOnScreen từ options
     const baseBet = options.baseBet || 500;
+    const betAmounts = options.betAmounts || [10000, 13000, 25000, 53000, 50000]; // Mảng 5 mức cược
     const sessionId = options.sessionId || 'default-session';
     const showStatsOnScreen = options.showStatsOnScreen !== false; // Default true
     
@@ -20,6 +21,7 @@ async function setupWebSocketHook(page, logger, options = {}) {
     logger && logger.log && logger.log('   WEBSOCKET HOOK SETUP - START');
     logger && logger.log && logger.log(`   Session ID: ${sessionId}`);
     logger && logger.log && logger.log(`   Base Bet Amount: ${baseBet}`);
+    logger && logger.log && logger.log(`   Bet Amounts: ${JSON.stringify(betAmounts)}`);
     logger && logger.log && logger.log(`   Show Stats On Screen: ${showStatsOnScreen}`);
     logger && logger.log && logger.log('========================================\n');
 
@@ -70,89 +72,157 @@ async function setupWebSocketHook(page, logger, options = {}) {
       const targetUrl = "wss://carkgwaiz.hytsocesk.com/websocket";
       logStats('[Session ' + SESSION_ID + '] Đang "hook" vào WebSocket. Chỉ theo dõi URL chứa: ' + targetUrl);
                    
-// Biến toàn cục để lưu ID phòng tốt nhất (ISOLATED BY SESSION)
-session.myBestRid = null;
+      // Biến toàn cục để lưu ID phòng tốt nhất (ISOLATED BY SESSION)
+      session.myBestRid = null;
                     
-// --- BIẾN MỚI ĐỂ THEO DÕI LOGIC "CHUỖI" (STREAK) ---
-session.myCurrentStreakType = null;
-session.myCurrentStreakCount = 0;
+      // --- BIẾN MỚI ĐỂ THEO DÕI LOGIC "CHUỖI" (STREAK) ---
+      session.myCurrentStreakType = null;
+      session.myCurrentStreakCount = 0;
                     
-// Biến "ngân hàng" (bank)
-session.mySetCount_L2 = 0;
-session.mySetCount_L3 = 0;
-session.mySetCount_L4 = 0;
-session.mySetCount_L5 = 0;
-session.mySetCount_L6 = 0;
+      // Biến "ngân hàng" (bank)
+      session.mySetCount_L2 = 0;
+      session.mySetCount_L3 = 0;
+      session.mySetCount_L4 = 0;
+      session.mySetCount_L5 = 0;
+      session.mySetCount_L6 = 0;
                     
-// --- BIẾN CƯỢC (MARTINGALE) ---
-session.myBaseBetAmount = ${baseBet};
-session.myCurrentBetAmount = session.myBaseBetAmount;
-session.myLastBetEid = null;
-session.isWaitingForResult = false;
-session.myLastBankedStreakType = null;
+      // --- BIẾN CƯỢC (CUSTOM BET LEVELS) ---
+      session.myBetAmounts = ${JSON.stringify(betAmounts)}; // Mảng mức cược từ màn hình
+      session.myCurrentBetLevel = 0; // Index hiện tại (0-4)
+      session.myBaseBetAmount = ${baseBet};
+      session.myCurrentBetAmount = session.myBetAmounts[0]; // Bắt đầu từ mức đầu tiên
+      session.myLastBetEid = null;
+      session.isWaitingForResult = false;
+      session.myLastBankedStreakType = null;
 
-// --- BIẾN CƯỢC 4 VÁN ---
-session.myRoundCounter = 0;
-session.isWaitingForFixedBet = false;
+      // --- BIẾN CƯỢC 4 VÁN ---
+      session.myRoundCounter = 0;
+      session.isWaitingForFixedBet = false;
+      
+      // === HELPER FUNCTION: Chia nhỏ số tiền cược thành các mệnh giá có sẵn ===
+      // Các mệnh giá có sẵn trong game (sắp xếp từ lớn đến nhỏ)
+      const AVAILABLE_DENOMINATIONS = [100000000, 50000000, 10000000, 5000000, 1000000, 500000, 100000, 50000, 10000, 5000, 1000, 500];
+      
+      /**
+       * Chia nhỏ số tiền cược thành các lần bấm với mệnh giá có sẵn
+       * Ví dụ: 7000 -> [{amount: 5000, count: 1}, {amount: 1000, count: 2}]
+       * @param {number} totalAmount - Tổng số tiền cần cược
+       * @returns {Array} - Mảng các lần bấm [{amount: 5000, count: 1}, ...]
+       */
+      const breakdownBetAmount = function(totalAmount) {
+        const breakdown = [];
+        let remaining = totalAmount;
+        
+        for (const denom of AVAILABLE_DENOMINATIONS) {
+          if (remaining >= denom) {
+            const count = Math.floor(remaining / denom);
+            breakdown.push({ amount: denom, count: count });
+            remaining = remaining % denom;
+          }
+        }
+        
+        if (remaining > 0) {
+          logStats('[Session ' + SESSION_ID + '] ⚠️ WARNING: Không thể chia hết số tiền ' + totalAmount.toLocaleString('vi-VN') + 'đ. Còn dư: ' + remaining + 'đ');
+        }
+        
+        return breakdown;
+      };
+      
+      /**
+       * Gửi nhiều message đặt cược dựa trên breakdown
+       * @param {WebSocket} socket - WebSocket để gửi
+       * @param {number} eid - EID cược (2 hoặc 5)
+       * @param {number} totalAmount - Tổng số tiền cần cược
+       * @param {number} rid - Room ID
+       * @param {string} betType - Loại cược ('Martingale' hoặc 'FixedBet')
+       */
+      const sendMultipleBets = function(socket, eid, totalAmount, rid, betType) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          console.error('[Session ' + SESSION_ID + '] SOCKET: WebSocket đã đóng, không thể gửi cược.');
+          return;
+        }
+        
+        const breakdown = breakdownBetAmount(totalAmount);
+        
+        logStats('[Session ' + SESSION_ID + '] SOCKET (Breakdown): Chia ' + totalAmount.toLocaleString('vi-VN') + 'đ thành ' + breakdown.length + ' lần bấm:');
+        breakdown.forEach((item, index) => {
+          logStats('[Session ' + SESSION_ID + ']   ' + (index + 1) + '. ' + item.amount.toLocaleString('vi-VN') + 'đ x ' + item.count + ' lần');
+        });
+        
+        let delay = 0;
+        breakdown.forEach((item) => {
+          for (let i = 0; i < item.count; i++) {
+            setTimeout(() => {
+              const messageArray = [5, "Simms", rid, {"cmd": 900, "eid": eid, "v": item.amount}];
+              const messageString = JSON.stringify(messageArray);
+              
+              logStats('[Session ' + SESSION_ID + '] SOCKET (Auto-Send-' + betType + '): Gửi ' + item.amount.toLocaleString('vi-VN') + 'đ ⬆️');
+              socket.send(messageString);
+            }, delay);
+            
+            delay += 200; // Delay 200ms giữa các lần bấm
+          }
+        });
+      };
 
-// --- BIẾN THEO DÕI SỐ TIỀN ---
-session.myCurrentBalance = 0;
-session.myInitialBalance = 0; // Số dư ban đầu (lần đầu tiên > 0)
-session.myPreviousBalance = 0; // Lưu số dư trước đó để tính thay đổi
-session.myTotalBetsPlaced = 0;
-session.myTotalWins = 0;
-session.myTotalLosses = 0;
+      // --- BIẾN THEO DÕI SỐ TIỀN ---
+      session.myCurrentBalance = 0;
+      session.myInitialBalance = 0; // Số dư ban đầu (lần đầu tiên > 0)
+      session.myPreviousBalance = 0; // Lưu số dư trước đó để tính thay đổi
+      session.myTotalBetsPlaced = 0;
+      session.myTotalWins = 0;
+      session.myTotalLosses = 0;
 
-// --- THỐNG KÊ NÂNG CAO ---
-session.myTotalBetAmount = 0; // Tổng số tiền đã cược (tất cả các lần)
-session.myTotalWinAmount = 0;
-session.myTotalLossAmount = 0;
-session.myCurrentWinStreak = 0;
-session.myCurrentLossStreak = 0;
-session.myMaxWinStreak = 0;
-session.myMaxLossStreak = 0;
-session.myHighestBet = 0; // Bắt đầu từ 0, sẽ cập nhật khi có cược
+      // --- THỐNG KÊ NÂNG CAO ---
+      session.myTotalBetAmount = 0; // Tổng số tiền đã cược (tất cả các lần)
+      session.myTotalWinAmount = 0;
+      session.myTotalLossAmount = 0;
+      session.myCurrentWinStreak = 0;
+      session.myCurrentLossStreak = 0;
+      session.myMaxWinStreak = 0;
+      session.myMaxLossStreak = 0;
+      session.myHighestBet = 0; // Bắt đầu từ 0, sẽ cập nhật khi có cược
 
-// --- THỜI GIAN CHẠY ---
-session.myStartTime = Date.now(); // Lưu timestamp bắt đầu (milliseconds)
-session.myEndTime = null; // Timestamp kết thúc (khi dừng/disconnect)
+      // --- THỜI GIAN CHẠY ---
+      session.myStartTime = Date.now(); // Lưu timestamp bắt đầu (milliseconds)
+      session.myEndTime = null; // Timestamp kết thúc (khi dừng/disconnect)
                     
-console.log('[Session ' + SESSION_ID + '] SOCKET (Logic): Khởi tạo. Cược cơ bản: ' + session.myBaseBetAmount);
-console.log('[Session ' + SESSION_ID + '] SOCKET (Runtime): Bắt đầu đếm thời gian chạy...');
+      console.log('[Session ' + SESSION_ID + '] SOCKET (Logic): Khởi tạo. Cược cơ bản: ' + session.myBaseBetAmount);
+      console.log('[Session ' + SESSION_ID + '] SOCKET (Runtime): Bắt đầu đếm thời gian chạy...');
 
-// Broadcast initial stats
-console.log('[BETTING_STATS]' + JSON.stringify({
-    currentBalance: session.myCurrentBalance,
-    totalBets: session.myTotalBetsPlaced,
-    totalBetAmount: session.myTotalBetAmount,
-    winCount: session.myTotalWins,
-    lossCount: session.myTotalLosses,
-    highestBet: session.myHighestBet,
-    runtime: getCurrentRuntime(),
-    runtimeFormatted: formatRuntime(getCurrentRuntime()),
-    lastBet: null,
-    lastOutcome: null
-}));
+      // Broadcast initial stats
+      console.log('[BETTING_STATS]' + JSON.stringify({
+          currentBalance: session.myCurrentBalance,
+          totalBets: session.myTotalBetsPlaced,
+          totalBetAmount: session.myTotalBetAmount,
+          winCount: session.myTotalWins,
+          lossCount: session.myTotalLosses,
+          highestBet: session.myHighestBet,
+          runtime: getCurrentRuntime(),
+          runtimeFormatted: formatRuntime(getCurrentRuntime()),
+          lastBet: null,
+          lastOutcome: null
+      }));
 
-// ---------------------------------------------------
+      // ---------------------------------------------------
                     
-// 2. Hook vào hàm 'send'
-if (!window.OriginalWebSocketSend) {
-    window.OriginalWebSocketSend = WebSocket.prototype.send;
-}
-WebSocket.prototype.send = function(data) { 
-    if (this.url === targetUrl) {
-        session.myLastUsedSocket = this;
-    }
-    window.OriginalWebSocketSend.apply(this, arguments);
-};
+      // 2. Hook vào hàm 'send'
+      if (!window.OriginalWebSocketSend) {
+          window.OriginalWebSocketSend = WebSocket.prototype.send;
+      }
+      WebSocket.prototype.send = function(data) { 
+          if (this.url === targetUrl) {
+              session.myLastUsedSocket = this;
+          }
+          window.OriginalWebSocketSend.apply(this, arguments);
+      };
                    
-// 3. Hook vào hàm 'onmessage' (LOGIC CHÍNH)
-Object.defineProperty(WebSocket.prototype, 'onmessage', {
-    set: function(originalCallback) {
-        const newCallback = function(event) {
-            if (this.url === targetUrl) {
-                session.myLastUsedSocket = this;
+      // 3. Hook vào hàm 'onmessage' (LOGIC CHÍNH)
+      Object.defineProperty(WebSocket.prototype, 'onmessage', {
+          set: function(originalCallback) {
+              const newCallback = function(event) {
+                  if (this.url === targetUrl) {
+                      session.myLastUsedSocket = this;
                    
                 const receivedData = event.data;
                 let parsedData;
@@ -168,11 +238,11 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                         if (parsedData[1].m !== undefined && parsedData[1].m !== null) {
                             // Lưu số dư ban đầu (lần đầu tiên > 0)
                             if (session.myInitialBalance === 0 && parsedData[1].m > 0) {
-                                // Số dư ban đầu = Số dư nhận được + Số tiền cược gần nhất (nếu có)
-                                // Vì khi nhận số dư lần đầu, có thể đang có cược chờ kết quả (tiền đã trừ)
-                                const betAmount = session.myCurrentBetAmount || 0;
-                                session.myInitialBalance = parsedData[1].m ;
-                                logStats('SOCKET (Balance Init): Số dư hiện tại: ' + parsedData[1].m.toLocaleString('vi-VN') + 'đ: ' + betAmount.toLocaleString('vi-VN') + 'đ = Số dư ban đầu: ' + session.myInitialBalance.toLocaleString('vi-VN') + 'đ');
+                                // Số dư ban đầu = Số dư nhận được + Số tiền cược cố định (500đ)
+                                // Vì khi nhận số dư lần đầu, nếu đang có cược FixedBet đầu tiên, tiền đã trừ 500đ
+                                const fixedBetAmount = 500; // Số tiền cược cố định
+                                session.myInitialBalance = parsedData[1].m + fixedBetAmount;
+                                logStats('SOCKET (Balance Init): Số dư từ server: ' + parsedData[1].m.toLocaleString('vi-VN') + 'đ + Cược cố định: ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ = Số dư ban đầu: ' + session.myInitialBalance.toLocaleString('vi-VN') + 'đ');
                             }
                             
                             // Lưu số dư trước đó
@@ -209,7 +279,7 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 for (const evt of events) {
                                     // Chỉ cần kiểm tra eid là 2 hoặc 5, KHÔNG cần kiểm tra wns
                                     // Vì chúng ta muốn theo dõi tất cả kết quả, không chỉ khi thắng
-                                    if (evt.eid === 2 || evt.eid === 5) {
+                                    if ((evt.eid === 2 || evt.eid === 5) && evt.wns && evt.wns.length > 0) {
                                         currentWinningEid = evt.eid; // Lưu lại là 2 hoặc 5
                                         logStats('SOCKET (Debug): Found winning eid: ' + evt.eid + ' | wns: ' + (evt.wns ? evt.wns.length : 'N/A'));
                                         break;
@@ -246,6 +316,8 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                     if (window.isWaitingForResult) {
                         window.isWaitingForResult = false; // Đã nhận kết quả
                        
+                        logStats('SOCKET (Result): Kiểm tra kết quả - EID thắng: ' + currentWinningEid + ' | EID đã cược: ' + session.myLastBetEid);
+                       
                         if (currentWinningEid === session.myLastBetEid) {
                             // THẮNG! (GẤP THẾP)
                             // Công thức: Tiền thắng = số tiền cược × 0.98 (tỷ lệ thắng 98%)
@@ -266,6 +338,16 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 session.myMaxWinStreak = session.myCurrentWinStreak;
                             }
                             
+                            // LƯU LẠI THÔNG TIN CƯỢC TRƯỚC KHI RESET (để gửi lên client)
+                            const previousBetLevel = session.myCurrentBetLevel;
+                            const previousBetAmount = session.myCurrentBetAmount;
+                            
+                            // Reset về mức cược đầu tiên khi THẮNG
+                            session.myCurrentBetLevel = 0;
+                            session.myCurrentBetAmount = session.myBetAmounts[0];
+                            
+                            logStats('SOCKET (Martingale): ✅ RESET! Từ mức ' + (previousBetLevel + 1) + ' (' + previousBetAmount.toLocaleString('vi-VN') + 'đ) → mức 1 (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
+                            
                             // Broadcast betting stats update
                             console.log('[BETTING_STATS]' + JSON.stringify({
                                 currentBalance: session.myCurrentBalance,
@@ -281,23 +363,28 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 currentLossStreak: session.myCurrentLossStreak,
                                 maxWinStreak: session.myMaxWinStreak,
                                 maxLossStreak: session.myMaxLossStreak,
+                                currentBetLevel: session.myCurrentBetLevel + 1, // Gửi level SAU KHI RESET (0 + 1 = 1)
+                                maxBetLevel: session.myBetAmounts.length,
+                                nextBetAmount: session.myCurrentBetAmount, // Đã reset về mức 1
                                 lastBet: {
                                     eid: session.myLastBetEid,
-                                    amount: session.myCurrentBetAmount,
+                                    amount: previousBetAmount,
                                     winAmount: winAmount
                                 },
                                 lastOutcome: 'win'
                             }));
-                            
-                            session.myCurrentBetAmount = session.myBaseBetAmount; // Reset tiền cược
                         } else {
                             // THUA! (GẤP THẾP)
-                            // Lợi nhuận = Tổng thắng - Tổng thua
-                            const balanceChange = session.myPreviousBalance - session.myCurrentBalance;
-                            const lossAmount = balanceChange > 0 ? balanceChange : session.myCurrentBetAmount;
+                            // LƯU LẠI THÔNG TIN CƯỢC TRƯỚC KHI TĂNG (để gửi lên client)
+                            const previousBetLevel = session.myCurrentBetLevel;
+                            const previousBetAmount = session.myCurrentBetAmount;
+                            
+                            // Tính số tiền thua = LUÔN LUÔN là số tiền vừa cược (previousBetAmount)
+                            // KHÔNG dùng balanceChange vì số dư từ server có thể chưa cập nhật kịp
+                            const lossAmount = previousBetAmount;
                             const profitLoss = session.myTotalWinAmount - session.myTotalLossAmount;
                             
-                            logStats('SOCKET (Martingale): THUA! Cược ' + session.myLastBetEid + ' nhưng kết quả là ' + (currentWinningEid || 'Khác') + '. Cược: ' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ | Lỗ vòng này: -' + lossAmount.toLocaleString('vi-VN') + 'đ | Lợi nhuận: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            logStats('SOCKET (Martingale): THUA! Cược ' + session.myLastBetEid + ' nhưng kết quả là ' + (currentWinningEid || 'Khác') + '. Cược: ' + previousBetAmount.toLocaleString('vi-VN') + 'đ | Lỗ vòng này: -' + lossAmount.toLocaleString('vi-VN') + 'đ | Lợi nhuận: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
                             
                             // Update statistics
                             session.myTotalLosses++;
@@ -308,6 +395,17 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 session.myMaxLossStreak = session.myCurrentLossStreak;
                             }
                             
+                            // Tăng lên mức cược tiếp theo khi THUA (thay vì nhân đôi)
+                            session.myCurrentBetLevel = Math.min(session.myCurrentBetLevel + 1, session.myBetAmounts.length - 1);
+                            session.myCurrentBetAmount = session.myBetAmounts[session.myCurrentBetLevel];
+                            
+                            logStats('SOCKET (Bet Level): Tăng lên mức cược ' + (session.myCurrentBetLevel + 1) + '/' + session.myBetAmounts.length + ' = ' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ');
+                            
+                            // Track highest bet
+                            if (session.myCurrentBetAmount > session.myHighestBet) {
+                                session.myHighestBet = session.myCurrentBetAmount;
+                            }
+                            
                             // Broadcast betting stats update
                             console.log('[BETTING_STATS]' + JSON.stringify({
                                 currentBalance: session.myCurrentBalance,
@@ -323,30 +421,26 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 currentLossStreak: session.myCurrentLossStreak,
                                 maxWinStreak: session.myMaxWinStreak,
                                 maxLossStreak: session.myMaxLossStreak,
+                                currentBetLevel: previousBetLevel + 1,
+                                maxBetLevel: session.myBetAmounts.length,
+                                nextBetAmount: session.myCurrentBetAmount,
                                 lastBet: {
                                     eid: session.myLastBetEid,
-                                    amount: session.myCurrentBetAmount,
+                                    amount: previousBetAmount,
                                     lossAmount: lossAmount
                                 },
                                 lastOutcome: 'loss'
                             }));
-                            
-                            session.myCurrentBetAmount *= 2; // Gấp đôi tiền cược cho LẦN SAU
-                            
-                            // Track highest bet
-                            if (session.myCurrentBetAmount > session.myHighestBet) {
-                                session.myHighestBet = session.myCurrentBetAmount;
-                            }
                         }
                         logStats('SOCKET (Martingale): Số tiền cược cho lần tới là: ' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ');
                         logStats('SOCKET (Stats): Tổng cược: ' + session.myTotalBetsPlaced + ' | Thắng: ' + session.myTotalWins + ' | Thua: ' + session.myTotalLosses);
                         logStats('SOCKET (Advanced Stats): Thắng liên tiếp: ' + session.myCurrentWinStreak + ' | Thua liên tiếp: ' + session.myCurrentLossStreak + ' | Tổng thắng: ' + session.myTotalWinAmount.toLocaleString('vi-VN') + 'đ | Tổng thua: ' + session.myTotalLossAmount.toLocaleString('vi-VN') + 'đ');
                         
-                        // Broadcast advanced stats to client
-                        console.log('[BETTING_STATS]', JSON.stringify({
+                        // Broadcast advanced stats to client (SAU MARTINGALE)
+                        console.log('[BETTING_STATS]' + JSON.stringify({
                             currentBalance: session.myCurrentBalance,
                             initialBalance: session.myInitialBalance,
-                            baseBetAmount: session.myBaseBet,
+                            baseBetAmount: session.myBaseBetAmount,
                             currentBetAmount: session.myCurrentBetAmount,
                             totalBets: session.myTotalBetsPlaced,
                             winCount: session.myTotalWins,
@@ -366,64 +460,107 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                     } else if (window.isWaitingForFixedBet) {
                         window.isWaitingForFixedBet = false; // Đã nhận kết quả
                         if (currentWinningEid === session.myLastBetEid) {
-                            // THẮNG! (FixedBet)
-                            // FixedBet cược cố định 500đ (hardcode ở line 596)
-                            // Công thức: Tiền thắng = 500 × 0.98 = 490đ (tỷ lệ thắng 98%)
-                            const fixedBetAmount = 500; // Hardcode amount từ line 596
-                            const winAmount = fixedBetAmount * 0.98; // 490đ
+                            // THẮNG! (FixedBet - KHÔNG TÍNH VÀO THỐNG KÊ)
+                            const fixedBetAmount = 500; // Cược cố định 500đ
+                            const winAmount = fixedBetAmount * 0.98;
                             
-                            logStats('SOCKET (FixedBet): THẮNG! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thành công. Lãi vòng này: +' + winAmount.toLocaleString('vi-VN') + 'đ');
+                            logStats('SOCKET (FixedBet): THẮNG! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thành công. Lãi: +' + winAmount.toLocaleString('vi-VN') + 'đ (KHÔNG TÍNH VÀO THỐNG KÊ)');
                             
-                            // Update statistics
-                            session.myTotalWins++;
-                            session.myTotalWinAmount += winAmount;
+                            // KHÔNG CẬP NHẬT THỐNG KÊ (chỉ log)
+                            // session.myTotalWins++; // ← COMMENT OUT
+                            // session.myTotalWinAmount += winAmount; // ← COMMENT OUT
                             const profitLoss = session.myTotalWinAmount - session.myTotalLossAmount;
                             
-                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
-                            session.myCurrentWinStreak++;
-                            session.myCurrentLossStreak = 0;
-                            if (session.myCurrentWinStreak > session.myMaxWinStreak) {
-                                session.myMaxWinStreak = session.myCurrentWinStreak;
-                            }
+                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy Martingale: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            
+                            // KHÔNG CẬP NHẬT STREAK (FixedBet không ảnh hưởng streak)
+                            // session.myCurrentWinStreak++; // ← COMMENT OUT
+                            // session.myCurrentLossStreak = 0; // ← COMMENT OUT
+                            
+                            // Reset về mức 1 SAU FixedBet WIN
+                            session.myCurrentBetLevel = 0;
+                            session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
+                            
+                            logStats('SOCKET (FixedBet WIN): ✅ Reset Martingale về mức 1 (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
+                            
+                            // Broadcast nextBetAmount = 1000đ (mức 1)
+                            // KHÔNG gửi lastBet (không hiển thị trong lịch sử)
+                            // GỬI lastOutcome = 'fixedbet' để client không tính toán nhầm
+                            console.log('[BETTING_STATS]' + JSON.stringify({
+                                currentBalance: session.myCurrentBalance,
+                                initialBalance: session.myInitialBalance,
+                                profitLoss: profitLoss,
+                                nextBetAmount: session.myCurrentBetAmount, // LUÔN là 1000đ sau FixedBet
+                                currentBetLevel: 1, // LUÔN là mức 1
+                                maxBetLevel: session.myBetAmounts.length,
+                                lastOutcome: 'fixedbet' // Đánh dấu là FixedBet WIN
+                            }));
                         } else {
-                            // THUA! (FixedBet)
-                            const fixedBetAmount = 500; // Hardcode amount từ line 596
-                            const balanceChange = session.myPreviousBalance - session.myCurrentBalance;
-                            const lossAmount = balanceChange > 0 ? balanceChange : fixedBetAmount;
+                            // THUA! (FixedBet - KHÔNG TÍNH VÀO THỐNG KÊ)
+                            const fixedBetAmount = 500; // Cược cố định 500đ
+                            const lossAmount = fixedBetAmount; // LUÔN LUÔN là số tiền vừa cược
                             const profitLoss = session.myTotalWinAmount - session.myTotalLossAmount;
                             
-                            logStats('SOCKET (FixedBet): THUA! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thất bại. Lỗ vòng này: -' + lossAmount.toLocaleString('vi-VN') + 'đ | Lợi nhuận: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            logStats('SOCKET (FixedBet): THUA! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thất bại. Lỗ: -' + lossAmount.toLocaleString('vi-VN') + 'đ (KHÔNG TÍNH VÀO THỐNG KÊ)');
                             
-                            // Update statistics
-                            session.myTotalLosses++;
-                            session.myTotalLossAmount += lossAmount;
-                            session.myCurrentLossStreak++;
-                            session.myCurrentWinStreak = 0;
-                            if (session.myCurrentLossStreak > session.myMaxLossStreak) {
-                                session.myMaxLossStreak = session.myCurrentLossStreak;
-                            }
+                            // KHÔNG CẬP NHẬT THỐNG KÊ (chỉ log)
+                            // session.myTotalLosses++; // ← COMMENT OUT
+                            // session.myTotalLossAmount += lossAmount; // ← COMMENT OUT
+                            
+                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy Martingale: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            
+                            // KHÔNG CẬP NHẬT STREAK (FixedBet không ảnh hưởng streak)
+                            // session.myCurrentLossStreak++; // ← COMMENT OUT
+                            // session.myCurrentWinStreak = 0; // ← COMMENT OUT
+                            
+                            // Reset về mức 1 SAU FixedBet LOSS
+                            session.myCurrentBetLevel = 0;
+                            session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
+                            
+                            logStats('SOCKET (FixedBet LOSS): ✅ Reset Martingale về mức 1 (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
+                            
+                            // Broadcast nextBetAmount = 1000đ (mức 1)
+                            // KHÔNG gửi lastBet (không hiển thị trong lịch sử)
+                            // GỬI lastOutcome = 'fixedbet' để client không tính toán nhầm
+                            console.log('[BETTING_STATS]' + JSON.stringify({
+                                currentBalance: session.myCurrentBalance,
+                                initialBalance: session.myInitialBalance,
+                                profitLoss: profitLoss,
+                                nextBetAmount: session.myCurrentBetAmount, // LUÔN là 1000đ sau FixedBet
+                                currentBetLevel: 1, // LUÔN là mức 1
+                                maxBetLevel: session.myBetAmounts.length,
+                                lastOutcome: 'fixedbet' // Đánh dấu là FixedBet LOSS
+                            }));
+                            
+                            // KHÔNG BROADCAST LASTBET (không hiển thị trong lịch sử)
+                            // console.log('[BETTING_STATS]' + JSON.stringify({
+                            //     currentBalance: session.myCurrentBalance,
+                            //     initialBalance: session.myInitialBalance,
+                            //     profitLoss: profitLoss,
+                            //     totalBets: session.myTotalBetsPlaced,
+                            //     winCount: session.myTotalWins,
+                            //     lossCount: session.myTotalLosses,
+                            //     highestBet: session.myHighestBet,
+                            //     totalWinAmount: session.myTotalWinAmount,
+                            //     totalLossAmount: session.myTotalLossAmount,
+                            //     currentWinStreak: session.myCurrentWinStreak,
+                            //     currentLossStreak: session.myCurrentLossStreak,
+                            //     maxWinStreak: session.myMaxWinStreak,
+                            //     maxLossStreak: session.myMaxLossStreak,
+                            //     currentBetLevel: 1,
+                            //     maxBetLevel: 1,
+                            //     nextBetAmount: fixedBetAmount,
+                            //     lastBet: {
+                            //         eid: session.myLastBetEid,
+                            //         amount: fixedBetAmount,
+                            //         lossAmount: lossAmount
+                            //     },
+                            //     lastOutcome: 'loss'
+                            // })); // ← COMMENT OUT
                         }
+                        // Log thống kê (chỉ log, không broadcast vì đã broadcast ở trên)
                         logStats('SOCKET (Stats): Tổng cược: ' + session.myTotalBetsPlaced + ' | Thắng: ' + session.myTotalWins + ' | Thua: ' + session.myTotalLosses);
                         logStats('SOCKET (Advanced Stats): Thắng liên tiếp: ' + session.myCurrentWinStreak + ' | Thua liên tiếp: ' + session.myCurrentLossStreak + ' | Tổng thắng: ' + session.myTotalWinAmount.toLocaleString('vi-VN') + 'đ | Tổng thua: ' + session.myTotalLossAmount.toLocaleString('vi-VN') + 'đ');
-                        
-                        // Broadcast advanced stats to client
-                        console.log('[BETTING_STATS]', JSON.stringify({
-                            currentBalance: session.myCurrentBalance,
-                            initialBalance: session.myInitialBalance,
-                            baseBetAmount: session.myBaseBet,
-                            currentBetAmount: session.myCurrentBetAmount,
-                            totalBets: session.myTotalBetsPlaced,
-                            winCount: session.myTotalWins,
-                            lossCount: session.myTotalLosses,
-                            profitLoss: session.myTotalWinAmount - session.myTotalLossAmount,
-                            highestBet: session.myHighestBet,
-                            totalWinAmount: session.myTotalWinAmount,
-                            totalLossAmount: session.myTotalLossAmount,
-                            currentWinStreak: session.myCurrentWinStreak,
-                            currentLossStreak: session.myCurrentLossStreak,
-                            maxWinStreak: session.myMaxWinStreak,
-                            maxLossStreak: session.myMaxLossStreak
-                        }));
                         
                         session.myLastBetEid = null;
                     }
@@ -592,12 +729,10 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                             // Đợi 15 giây
                             setTimeout(() => {
                                 const ridToSend = session.myBestRid || 6476537;
-                                const messageArray = [5, "Simms", ridToSend, {"cmd": 900, "eid": eidToBet, "v": amountToBet}];
-                                const messageString = JSON.stringify(messageArray);
                            
                                 if (session.myLastUsedSocket && session.myLastUsedSocket.readyState === WebSocket.OPEN) {
-                                    logStats('SOCKET (Auto-Send-Martingale): Đang gửi ⬆️', messageString);
-                                    session.myLastUsedSocket.send(messageString);
+                                    // GỬI NHIỀU LẦN DỰA TRÊN BREAKDOWN
+                                    sendMultipleBets(session.myLastUsedSocket, eidToBet, amountToBet, ridToSend, 'Martingale');
                                 } else {
                                     console.error('SOCKET (Auto-Send-Martingale): Không thể gửi tin nhắn. Socket đã bị đóng.');
                                     window.isWaitingForResult = false; // Hủy cược nếu socket đóng
@@ -610,7 +745,7 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                             // Chỉ chạy nếu cược streak KHÔNG xảy ra
                             
                             session.myRoundCounter = 0; // Reset bộ đếm ván
-                            const amountToBet = 500; // Cược cố định 500đ
+                            const amountToBet = 500; // CƯỢC CỐ ĐỊNH = 500đ (không tính vào thống kê)
                             const eidToBet = 2; // Cược mặc định EID 2 (bạn có thể đổi thành 5 nếu muốn)
                             
                             // === CHECK PAUSE FLAG TRƯỚC KHI ĐẶT CƯỢC ===
@@ -628,52 +763,52 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
                                 return; // Dừng, không đặt cược
                             }
                             
-                            // Track highest bet
-                            if (amountToBet > session.myHighestBet) {
-                                session.myHighestBet = amountToBet;
-                                logStats('SOCKET (Stats): Cập nhật tiền cược cao nhất: ' + session.myHighestBet.toLocaleString('vi-VN') + 'đ');
-                            }
+                            // KHÔNG TRACK HIGHEST BET (FixedBet không tính vào thống kê)
+                            // if (amountToBet > session.myHighestBet) {
+                            //     session.myHighestBet = amountToBet;
+                            //     logStats('SOCKET (Stats): Cập nhật tiền cược cao nhất: ' + session.myHighestBet.toLocaleString('vi-VN') + 'đ');
+                            // }
                             
-                            logStats('SOCKET (Auto-Trigger): ĐỦ 4 VÁN (không cược streak)! Kích hoạt cược số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định)');
+                            logStats('SOCKET (Auto-Trigger): ĐỦ 4 VÁN (không cược streak)! Kích hoạt cược số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định - KHÔNG TÍNH VÀO THỐNG KÊ)');
  
                             logStats('SOCKET (Auto-Trigger): Cược EID: ' + eidToBet + ' | Số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định)');
                             
                             // Đặt cờ chờ kết quả CỐ ĐỊNH (không ảnh hưởng Martingale)
                             window.isWaitingForFixedBet = true; // <-- Cờ riêng
                             session.myLastBetEid = eidToBet; // Lưu lại EID đã cược
-                            session.myTotalBetsPlaced++; // Tăng số lượng cược
-                            session.myTotalBetAmount += amountToBet; // Cộng dồn tổng tiền đã cược
                             
-                            // Broadcast real-time stats before betting
-                            console.log('[BETTING_STATS]' + JSON.stringify({
-                                currentBalance: session.myCurrentBalance,
-                                initialBalance: session.myInitialBalance,
-                                profitLoss: session.myTotalWinAmount - session.myTotalLossAmount,
-                                totalBets: session.myTotalBetsPlaced,
-                                totalBetAmount: session.myTotalBetAmount,
-                                winCount: session.myTotalWins,
-                                lossCount: session.myTotalLosses,
-                                highestBet: session.myHighestBet,
-                                totalWinAmount: session.myTotalWinAmount,
-                                totalLossAmount: session.myTotalLossAmount,
-                                currentWinStreak: session.myCurrentWinStreak,
-                                currentLossStreak: session.myCurrentLossStreak,
-                                maxWinStreak: session.myMaxWinStreak,
-                                maxLossStreak: session.myMaxLossStreak,
-                                currentBet: amountToBet,
-                                lastBet: null,
-                                lastOutcome: null
-                            }));
+                            // KHÔNG TĂNG THỐNG KÊ (FixedBet không tính)
+                            // session.myTotalBetsPlaced++; // ← COMMENT OUT
+                            // session.myTotalBetAmount += amountToBet; // ← COMMENT OUT
+                            
+                            // KHÔNG BROADCAST STATS (FixedBet không hiển thị trước khi đặt cược)
+                            // console.log('[BETTING_STATS]' + JSON.stringify({
+                            //     currentBalance: session.myCurrentBalance,
+                            //     initialBalance: session.myInitialBalance,
+                            //     profitLoss: session.myTotalWinAmount - session.myTotalLossAmount,
+                            //     totalBets: session.myTotalBetsPlaced,
+                            //     totalBetAmount: session.myTotalBetAmount,
+                            //     winCount: session.myTotalWins,
+                            //     lossCount: session.myTotalLosses,
+                            //     highestBet: session.myHighestBet,
+                            //     totalWinAmount: session.myTotalWinAmount,
+                            //     totalLossAmount: session.myTotalLossAmount,
+                            //     currentWinStreak: session.myCurrentWinStreak,
+                            //     currentLossStreak: session.myCurrentLossStreak,
+                            //     maxWinStreak: session.myMaxWinStreak,
+                            //     maxLossStreak: session.myMaxLossStreak,
+                            //     currentBet: amountToBet,
+                            //     lastBet: null,
+                            //     lastOutcome: null
+                            // })); // ← COMMENT OUT
                             
                             // Gửi cược
                             setTimeout(() => {
                                 const ridToSend = session.myBestRid || 6476537;
-                                const messageArray = [5, "Simms", ridToSend, {"cmd": 900, "eid": eidToBet, "v": amountToBet}];
-                                const messageString = JSON.stringify(messageArray);
                             
                                 if (session.myLastUsedSocket && session.myLastUsedSocket.readyState === WebSocket.OPEN) {
-                                    logStats('SOCKET (Auto-Send-Fixed): Đang gửi ⬆️', messageString);
-                                    session.myLastUsedSocket.send(messageString);
+                                    // GỬI NHIỀU LẦN DỰA TRÊN BREAKDOWN
+                                    sendMultipleBets(session.myLastUsedSocket, eidToBet, amountToBet, ridToSend, 'FixedBet');
                                 } else {
                                     console.error('SOCKET (Auto-Send-Fixed): Không thể gửi tin nhắn. Socket đã bị đóng.');
                                     window.isWaitingForFixedBet = false; // Hủy cược nếu socket đóng
@@ -706,6 +841,27 @@ Object.defineProperty(WebSocket.prototype, 'onmessage', {
     // Setup console listener to forward browser logs to Node.js
     page.on('console', async (msg) => {
       const text = msg.text();
+      
+      // *** FORWARD [BETTING_STATS] MESSAGES TO CLIENT ***
+      if (text.startsWith('[BETTING_STATS]')) {
+        try {
+          const idx = text.indexOf('{');
+          if (idx !== -1) {
+            const jsonStr = text.substring(idx);
+            const parsed = JSON.parse(jsonStr);
+            const sessionManager = require('../session_manager');
+            sessionManager.broadcastToSession(sessionId, {
+              type: 'betting-stats',
+              sessionId: sessionId,
+              ...parsed,
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (e) {
+          logger && logger.warn && logger.warn(`🟡 [BETTING_STATS] parse error: ${e.message}`);
+        }
+        return; // Không xử lý tiếp như log thông thường
+      }
       
       // Chỉ forward logs từ SOCKET (hookScript) cho SESSION CỤ THỂ
       if (text.includes('SOCKET') || text.includes(`[Session ${sessionId}]`)) {

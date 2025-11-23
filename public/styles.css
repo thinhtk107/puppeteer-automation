@@ -359,6 +359,10 @@ header h1 {
     border-color: var(--secondary-color);
 }
 
+.stat-card.stat-initial-balance {
+    border-color: var(--info-color);
+}
+
 .stat-card.stat-bet {
     border-color: var(--warning-color);
 }

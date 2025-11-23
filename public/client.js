@@ -76,6 +76,10 @@ async function handleLoginSubmit(e) {
         parseInt(document.getElementById('betAmount5').value) || 10000
     ];
     
+    // Get win/loss targets
+    const targetWin = parseInt(document.getElementById('targetWin').value) || 0;
+    const targetLoss = parseInt(document.getElementById('targetLoss').value) || 0;
+    
     const formData = {
         url: document.getElementById('url').value,
         username: document.getElementById('username').value,
@@ -124,6 +128,8 @@ async function handleLoginSubmit(e) {
             currentLossStreak: 0,
             maxWinStreak: 0,
             maxLossStreak: 0,
+            targetWin: targetWin, // Mục tiêu thắng (dừng khi đạt)
+            targetLoss: targetLoss, // Mức thua tối đa (dừng khi đạt)
             L2Bank: 0,
             L3Bank: 0,
             L4Bank: 0,
@@ -766,11 +772,13 @@ function updateBettingStatsDisplay() {
     if (!bettingStats) return;
     console.log('🔄 Updating betting stats display...', bettingStats);
     const currentBalanceEl = document.getElementById('currentBalance');
+    const initialBalanceEl = document.getElementById('initialBalance');
     const currentBetEl = document.getElementById('currentBetDisplay');
     const winCountEl = document.getElementById('winCount');
     const lossCountEl = document.getElementById('lossCount');
     const totalProfitEl = document.getElementById('totalProfit');
     const totalBetsEl = document.getElementById('totalBets');
+    
     if (currentBalanceEl) {
         currentBalanceEl.textContent = bettingStats.currentBalance.toLocaleString('vi-VN');
         if (bettingStats.currentBalance > bettingStats.initialBalance) {
@@ -780,6 +788,10 @@ function updateBettingStatsDisplay() {
         } else {
             currentBalanceEl.style.color = 'var(--text-primary)';
         }
+    }
+    
+    if (initialBalanceEl) {
+        initialBalanceEl.textContent = bettingStats.initialBalance.toLocaleString('vi-VN');
     }
     if (currentBetEl) {
         currentBetEl.textContent = bettingStats.currentBetAmount.toLocaleString('vi-VN');
@@ -798,6 +810,18 @@ function updateBettingStatsDisplay() {
     }
     if (totalBetsEl) {
         totalBetsEl.textContent = bettingStats.totalBets;
+    }
+    
+    // Update win/loss target display
+    const targetWinEl = document.getElementById('targetWinDisplay');
+    const targetLossEl = document.getElementById('targetLossDisplay');
+    if (targetWinEl) {
+        const targetWin = bettingStats.targetWin || 0;
+        targetWinEl.textContent = targetWin > 0 ? targetWin.toLocaleString('vi-VN') + 'đ' : 'Không giới hạn';
+    }
+    if (targetLossEl) {
+        const targetLoss = bettingStats.targetLoss || 0;
+        targetLossEl.textContent = targetLoss > 0 ? targetLoss.toLocaleString('vi-VN') + 'đ' : 'Không giới hạn';
     }
     
     // Update next bet amount
@@ -1094,9 +1118,107 @@ function handleBettingStatistics(data) {
     }
     
     console.log('📊 Updated bettingStats:', bettingStats);
+    
+    // === AUTO ADD TO HISTORY WHEN RECEIVING LAST BET DATA ===
+    // Khi nhận được lastBet + lastOutcome từ server, tự động thêm vào lịch sử
+    if (data.lastBet && data.lastOutcome && data.currentBetLevel) {
+        const lastBet = data.lastBet;
+        const profit = data.lastOutcome === 'win' 
+            ? (lastBet.winAmount || 0) 
+            : -(lastBet.lossAmount || 0);
+        
+        console.log('🎯 Auto-adding bet to history from BETTING_STATS:', {
+            betAmount: lastBet.amount,
+            eid: lastBet.eid,
+            result: data.lastOutcome,
+            profit: profit,
+            currentBetLevel: data.currentBetLevel
+        });
+        
+        // === CẬP NHẬT SỐ DƯ: Ưu tiên từ server, nếu không có thì tính từ kết quả cược ===
+        if (data.currentBalance !== undefined) {
+            // Server gửi balance → Dùng giá trị từ server
+            bettingStats.currentBalance = data.currentBalance;
+            console.log('💵 Balance from server:', data.currentBalance);
+        } else {
+            // Server không gửi balance → Tính toán dựa trên kết quả cược
+            if (bettingStats.currentBalance !== undefined) {
+                bettingStats.currentBalance += profit;
+                console.log('💵 Calculated balance:', bettingStats.currentBalance, '(profit:', profit, ')');
+            }
+        }
+        
+        addBetToHistory({
+            betAmount: lastBet.amount,
+            eid: lastBet.eid,
+            result: data.lastOutcome,
+            profit: profit,
+            bankStatus: {
+                L2: data.bankL2 || bettingStats.bankL2 || 0,
+                L3: data.bankL3 || bettingStats.bankL3 || 0,
+                L4: data.bankL4 || bettingStats.bankL4 || 0,
+                L5: data.bankL5 || bettingStats.bankL5 || 0,
+                L6: data.bankL6 || bettingStats.bankL6 || 0
+            },
+            currentBetLevel: data.currentBetLevel,
+            maxBetLevel: data.maxBetLevel || 5,
+            totalWinAmount: data.totalWinAmount || 0,
+            totalLossAmount: data.totalLossAmount || 0
+        });
+    }
+    
+    // === SAVE BANK STATUS TO BETTING STATS ===
+    // Lưu bankStatus vào bettingStats để sử dụng trong lịch sử cược
+    if (data.bankL2 !== undefined) bettingStats.bankL2 = data.bankL2;
+    if (data.bankL3 !== undefined) bettingStats.bankL3 = data.bankL3;
+    if (data.bankL4 !== undefined) bettingStats.bankL4 = data.bankL4;
+    if (data.bankL5 !== undefined) bettingStats.bankL5 = data.bankL5;
+    if (data.bankL6 !== undefined) bettingStats.bankL6 = data.bankL6;
+    
     updateBettingStatsDisplay();
     updateAdvancedStats(data);
     updateBankStatus(data);
+    
+    // === UPDATE LAST BET DISPLAY ===
+    if (data.lastBet) {
+        const lastBetEl = document.getElementById('lastBetAmount');
+        const lastBetEidEl = document.getElementById('lastBetEid');
+        
+        if (lastBetEl) {
+            lastBetEl.textContent = data.lastBet.amount.toLocaleString('vi-VN') + 'đ';
+        }
+        if (lastBetEidEl) {
+            lastBetEidEl.textContent = 'EID ' + data.lastBet.eid;
+        }
+    }
+    
+    // === CHECK WIN/LOSS TARGET AND STOP IF REACHED ===
+    checkWinLossTarget(bettingStats);
+}
+
+// Check if win/loss target is reached and stop betting
+function checkWinLossTarget(bettingStats) {
+    if (!bettingStats) return;
+    
+    const profit = bettingStats.totalProfit || 0;
+    const targetWin = bettingStats.targetWin || 0;
+    const targetLoss = bettingStats.targetLoss || 0;
+    
+    // Check win target (profit >= targetWin)
+    if (targetWin > 0 && profit >= targetWin) {
+        console.log(`🎯 ĐÃ ĐẠT MỤC TIÊU THẮNG! Lãi: ${profit.toLocaleString('vi-VN')}đ >= Mục tiêu: ${targetWin.toLocaleString('vi-VN')}đ`);
+        showFormMessage(`🎉 Đã đạt mục tiêu thắng ${targetWin.toLocaleString('vi-VN')}đ! Dừng đặt cược.`, 'success');
+        stopSession();
+        return;
+    }
+    
+    // Check loss target (profit <= -targetLoss)
+    if (targetLoss > 0 && profit <= -targetLoss) {
+        console.log(`🛑 ĐÃ ĐẠT MỨC THUA TỐI ĐA! Lỗ: ${Math.abs(profit).toLocaleString('vi-VN')}đ >= Mức tối đa: ${targetLoss.toLocaleString('vi-VN')}đ`);
+        showFormMessage(`⚠️ Đã đạt mức thua tối đa ${targetLoss.toLocaleString('vi-VN')}đ! Dừng đặt cược.`, 'error');
+        stopSession();
+        return;
+    }
 }
 
 // Update advanced statistics display
@@ -1213,6 +1335,8 @@ function handleRealTimeStats(data) {
     
     // Update Bank Status (L2-L6)
     if (stats.bankStatus) {
+        const bettingStats = getActiveStats();
+        
         const bankL2El = document.getElementById('bankL2');
         const bankL3El = document.getElementById('bankL3');
         const bankL4El = document.getElementById('bankL4');
@@ -1224,6 +1348,15 @@ function handleRealTimeStats(data) {
         if (bankL4El) bankL4El.textContent = stats.bankStatus.L4;
         if (bankL5El) bankL5El.textContent = stats.bankStatus.L5;
         if (bankL6El) bankL6El.textContent = stats.bankStatus.L6;
+        
+        // Save to bettingStats for history tracking
+        if (bettingStats) {
+            bettingStats.bankL2 = stats.bankStatus.L2;
+            bettingStats.bankL3 = stats.bankStatus.L3;
+            bettingStats.bankL4 = stats.bankStatus.L4;
+            bettingStats.bankL5 = stats.bankStatus.L5;
+            bettingStats.bankL6 = stats.bankStatus.L6;
+        }
         
         // Add visual indicator for active banks
         highlightActiveBank(stats.bankStatus);
@@ -1260,33 +1393,61 @@ function handleRealTimeStats(data) {
     if (nextBetEl && bettingStats) {
         let nextBetAmount = 0;
         
-        // Nếu server gửi nextBetAmount, dùng nó
+        // ƯU TIÊN TUYỆT ĐỐI: Sử dụng nextBetAmount từ server
+        // Server đã tính toán đúng logic: 
+        // - THẮNG → reset về mức 1
+        // - THUA → tăng lên 1 level  
+        // - FixedBet → LUÔN reset về mức 1
         if (stats.nextBetAmount !== undefined) {
             nextBetAmount = stats.nextBetAmount;
-        }
-        // Nếu không, tính dựa trên currentBetLevel và betAmounts
-        else if (bettingStats.betAmounts && bettingStats.currentBetLevel !== undefined) {
-            // currentBetLevel là index (0-4), lấy số tiền từ mảng
-            const nextLevel = bettingStats.currentBetLevel;
-            if (nextLevel >= 0 && nextLevel < bettingStats.betAmounts.length) {
-                nextBetAmount = bettingStats.betAmounts[nextLevel];
+            console.log('💰 Next bet from server:', nextBetAmount, '(lastOutcome:', stats.lastOutcome, ')');
+            
+            // Nếu là FixedBet, KHÔNG tính toán gì thêm (server đã reset)
+            if (stats.lastOutcome === 'fixedbet') {
+                console.log('🎯 FixedBet detected - Server đã reset về mức 1:', nextBetAmount);
             }
         }
-        // Fallback cuối cùng
+        // Fallback 1: Tính dựa trên lastOutcome (chỉ khi server không gửi)
+        else if (bettingStats.betAmounts && stats.lastOutcome !== undefined) {
+            if (stats.lastOutcome === 'win' || stats.lastOutcome === 'fixedbet') {
+                // THẮNG hoặc FixedBet: Reset về mức 1
+                nextBetAmount = bettingStats.betAmounts[0];
+                console.log('✅ Win/FixedBet detected, reset to level 1:', nextBetAmount);
+            } else if (stats.lastOutcome === 'loss') {
+                // THUA: Tăng lên 1 level
+                const currentLevel = (stats.currentBetLevel || 1) - 1; // Display (1-5) → Index (0-4)
+                const nextLevel = Math.min(currentLevel + 1, bettingStats.betAmounts.length - 1);
+                nextBetAmount = bettingStats.betAmounts[nextLevel];
+                console.log('❌ Loss detected, increase to level', nextLevel + 1, ':', nextBetAmount);
+            }
+        }
+        // Fallback 2: Hiển thị mức hiện tại từ bettingStats
+        else if (bettingStats.betAmounts && bettingStats.currentBetLevel !== undefined) {
+            nextBetAmount = bettingStats.betAmounts[bettingStats.currentBetLevel];
+        }
+        // Fallback 3: Hiển thị từ stats
         else if (stats.currentBetAmount !== undefined) {
             nextBetAmount = stats.currentBetAmount;
-        } else if (bettingStats.currentBetAmount !== undefined) {
+        }
+        // Fallback 4: Hiển thị từ bettingStats.currentBetAmount
+        else if (bettingStats.currentBetAmount !== undefined) {
             nextBetAmount = bettingStats.currentBetAmount;
         }
+        
+        // Xác định loại cược (FixedBet hay Martingale)
+        const maxLevel = stats.maxBetLevel !== undefined ? stats.maxBetLevel : (bettingStats.betAmounts ? bettingStats.betAmounts.length : 5);
+        const isFixedBet = maxLevel === 1;
         
         // Hiển thị số tiền
         if (nextBetAmount > 0) {
             nextBetEl.textContent = nextBetAmount.toLocaleString('vi-VN') + 'đ';
             nextBetEl.className = 'stat-value';
             
-            // Highlight if doubled (Martingale)
-            if (nextBetAmount > bettingStats.baseBetAmount) {
+            // Highlight if doubled (Martingale only)
+            if (!isFixedBet && nextBetAmount > bettingStats.baseBetAmount) {
                 nextBetEl.classList.add('bet-doubled');
+            } else {
+                nextBetEl.classList.remove('bet-doubled');
             }
         }
     }
@@ -1296,8 +1457,18 @@ function handleRealTimeStats(data) {
         const currentLevel = stats.currentBetLevel !== undefined ? stats.currentBetLevel : bettingStats.currentBetLevel;
         const maxLevel = stats.maxBetLevel !== undefined ? stats.maxBetLevel : (bettingStats.betAmounts ? bettingStats.betAmounts.length : 5);
         
+        const isFixedBet = maxLevel === 1;
+        
         if (currentLevel !== undefined) {
-            betLevelInfoEl.textContent = `Mức ${currentLevel + 1}/${maxLevel}`;
+            if (isFixedBet) {
+                // CƯỢC CỐ ĐỊNH: Không hiển thị "Mức 1/1"
+                betLevelInfoEl.textContent = '';
+                betLevelInfoEl.style.display = 'none';
+            } else {
+                // CƯỢC GẤP THẾP: Hiển thị mức (1/5, 2/5, ...)
+                betLevelInfoEl.textContent = `Mức ${currentLevel}/${maxLevel}`;
+                betLevelInfoEl.style.display = 'inline';
+            }
         }
     }
     
@@ -1386,6 +1557,12 @@ function handleRealTimeStats(data) {
             // Add flash animation
             currentBalanceEl.classList.add('flash-animation');
             setTimeout(() => currentBalanceEl.classList.remove('flash-animation'), 500);
+        }
+        
+        // Update initial balance display
+        const initialBalanceEl = document.getElementById('initialBalance');
+        if (initialBalanceEl && bettingStats.initialBalance > 0) {
+            initialBalanceEl.textContent = bettingStats.initialBalance.toLocaleString('vi-VN') + 'đ';
         }
     }
     
@@ -1685,11 +1862,16 @@ function parseBetResultFromLog(logMessage) {
             processedLogCache.delete(recentHash);
         }, 300);
         
-        // Get current bet level (estimate based on bet amount)
-        // Use bettingStats.betAmounts if available, otherwise use default
-        const betAmounts = bettingStats.betAmounts || [1000, 5000, 10000, 10000, 10000];
-        let currentBetLevel = betAmounts.indexOf(betData.betAmount) + 1;
-        if (currentBetLevel === 0) currentBetLevel = 1; // Default if not found
+        // Get current bet level from bettingStats (if available from server)
+        // Server gửi currentBetLevel trong [BETTING_STATS] khi có kết quả thắng/thua
+        let currentBetLevel = bettingStats.currentBetLevel;
+        
+        // Nếu không có từ server, thử ước lượng dựa trên bet amount
+        if (currentBetLevel === undefined) {
+            const betAmounts = bettingStats.betAmounts || [10000, 13000, 25000, 53000, 50000];
+            const levelIndex = betAmounts.indexOf(betData.betAmount);
+            currentBetLevel = levelIndex >= 0 ? levelIndex + 1 : 1; // +1 vì UI hiển thị từ 1-5
+        }
         
         addBetToHistory({
             betAmount: betData.betAmount,
@@ -1704,7 +1886,7 @@ function parseBetResultFromLog(logMessage) {
                 L6: bettingStats.L6Bank || 0
             },
             currentBetLevel: currentBetLevel,
-            maxBetLevel: 5,
+            maxBetLevel: bettingStats.maxBetLevel || 5,
             totalWinAmount: bettingStats.totalWinAmount || 0,
             totalLossAmount: bettingStats.totalLossAmount || 0
         });
@@ -1848,10 +2030,12 @@ function renderBetHistory() {
                             ${profitSign}${item.profit.toLocaleString('vi-VN')}đ
                         </span>
                     </div>
+                    ${item.maxBetLevel > 1 ? `
                     <div class="bet-detail-item">
                         <span class="bet-detail-label">📈 Mức cược:</span>
                         <span class="bet-detail-value">Mức ${item.currentBetLevel}/${item.maxBetLevel}</span>
                     </div>
+                    ` : ''}
                 </div>
                 
                 <div class="bet-history-bank">

@@ -143,14 +143,14 @@ async function handleInitialPopups(page, templatesDir, logger) {
   logger && logger.log && logger.log('\n--- BƯỚC 5: Đang kiểm tra và dọn dẹp Popups ban đầu ---');
   
   const templateName = 'common_popup_X.png';
-  const maxChecks = 3; // Tăng số lần kiểm tra lên 3
+  const maxChecks = 1; // Tăng số lần kiểm tra lên 3
   let checks = 0;
   const cfg = require('../config/config');
   const templatesMap = buildTemplatesMap(templatesDir);
 
   // Chờ một chút để popup có thời gian xuất hiện
   logger && logger.log && logger.log('⏳ Chờ popup xuất hiện...');
-  await page.waitForTimeout(2000); // Chờ 2 giây trước khi bắt đầu tìm popup
+  await page.waitForTimeout(2000); // Chờ 2 giây trước khi bắt đầu tìm popup (giảm từ 2s)
 
   while (checks < maxChecks) {
     checks++;
@@ -165,7 +165,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
         templatesMap,
         templatesDir,
         templateName,
-        5000, // Tăng timeout lên 5s để chờ popup xuất hiện
+        3000, // Tăng timeout lên 3s để chờ popup xuất hiện
         cfg.TEMPLATE_INTERVAL_MS || 500,
         logger
       );
@@ -183,7 +183,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
       await clickAbsolute(page, xButtonCoords.x, xButtonCoords.y, logger);
       logger && logger.log && logger.log('✓ Đã click vào nút X để đóng popup');
 
-      await page.waitForTimeout(3000); // Tăng thời gian đợi popup đóng và popup mới xuất hiện lên 3s
+      await page.waitForTimeout(1000); // Chờ 1 giây sau khi đóng popup (giảm từ 3s)
       continue; // Kiểm tra tiếp popup khác
     } else {
       logger && logger.log && logger.log(`✗ Không tìm thấy popup nào`);
@@ -213,33 +213,65 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger, options 
     
     // Strategy 1: Find based on text_phung.png position (most reliable)
     try {
-      logger && logger.log && logger.log('Strategy 1: Finding PHỤNG based on text_phung.png position...');
+      logger && logger.log && logger.log('Strategy 1: Waiting for game PHỤNG to fully load...');
       
-      // First, find text_phung.png
-      const textPhungCoords = await waitForTemplate(
-        page,
-        templatesMap,
-        templatesDir,
-        'text_phung.png',
-        10000, // 10 seconds timeout
-        cfg.TEMPLATE_INTERVAL_MS || 500,
-        logger
-      );
+      // === ĐỢI GAME LOAD XONG: Text "PHỤNG" xuất hiện ổn định ===
+      // Đợi text_phung.png xuất hiện và ổn định (không bị mất/hiện lại)
+      let stablePhungCoords = null;
+      let stableCount = 0;
+      const requiredStableChecks = 3; // Phải tìm thấy liên tục 3 lần
+      const maxAttempts = 30; // Tối đa 30 lần kiểm tra (15 giây)
+      let attempt = 0;
       
-      if (textPhungCoords) {
-        logger && logger.log && logger.log(`✓ Found text_phung at: (${textPhungCoords.x}, ${textPhungCoords.y})`);
+      while (stableCount < requiredStableChecks && attempt < maxAttempts) {
+        attempt++;
         
-        // Click directly on the text_phung position (center of the found template)
-        // The text "PHỤNG" is part of the clickable game button, so we can click on it
+        try {
+          const coords = await waitForTemplate(
+            page,
+            templatesMap,
+            templatesDir,
+            'text_phung.png',
+            1000, // Timeout ngắn 1s mỗi lần check
+            cfg.TEMPLATE_INTERVAL_MS || 500,
+            null // Tắt log để tránh spam
+          );
+          
+          if (coords) {
+            stableCount++;
+            stablePhungCoords = coords;
+            logger && logger.log && logger.log(`✓ Found text_phung (${stableCount}/${requiredStableChecks}): (${coords.x}, ${coords.y})`);
+          } else {
+            // Nếu không tìm thấy, reset counter
+            if (stableCount > 0) {
+              logger && logger.log && logger.log(`⚠️ Text PHỤNG disappeared, reset counter (was ${stableCount}/${requiredStableChecks})`);
+            }
+            stableCount = 0;
+            stablePhungCoords = null;
+          }
+        } catch (err) {
+          // Không tìm thấy trong lần này, reset counter
+          if (stableCount > 0) {
+            logger && logger.log && logger.log(`⚠️ Text PHỤNG check failed, reset counter (was ${stableCount}/${requiredStableChecks})`);
+          }
+          stableCount = 0;
+          stablePhungCoords = null;
+        }
         
-        logger && logger.log && logger.log(`Clicking on PHỤNG text position: (${textPhungCoords.x}, ${textPhungCoords.y})`);
+        // Đợi 500ms trước khi check lần tiếp theo
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      if (stablePhungCoords && stableCount >= requiredStableChecks) {
+        logger && logger.log && logger.log(`✓ Game PHỤNG loaded stable at: (${stablePhungCoords.x}, ${stablePhungCoords.y})`);
+        logger && logger.log && logger.log(`Clicking on PHỤNG text position: (${stablePhungCoords.x}, ${stablePhungCoords.y})`);
         
         const { clickAbsolute } = require('../helpers/click_helper');
-        await clickAbsolute(page, textPhungCoords.x, textPhungCoords.y, logger);
+        await clickAbsolute(page, stablePhungCoords.x, stablePhungCoords.y, logger);
         phungClicked = true;
-        logger && logger.log && logger.log('✓ Clicked "PHỤNG" based on text_phung.png position');
+        logger && logger.log && logger.log('✓ Clicked "PHỤNG" based on stable text_phung.png position');
       } else {
-        logger && logger.warn && logger.warn('Could not find text_phung.png');
+        logger && logger.warn && logger.warn('Could not find stable text_phung.png after ' + attempt + ' attempts');
       }
     } catch (textPhungError) {
       logger && logger.warn && logger.warn('Strategy 1 failed:', textPhungError.message);
