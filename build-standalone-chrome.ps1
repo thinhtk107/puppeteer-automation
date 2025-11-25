@@ -162,8 +162,8 @@ echo.
 echo Starting server...
 echo.
 
-REM Set Chrome path environment variable
-set PUPPETEER_EXECUTABLE_PATH=%~dp0chrome\chrome.exe
+REM KHÔNG set PUPPETEER_EXECUTABLE_PATH - Để automation.js tự động tìm
+REM Chrome sẽ được tự động detect: chrome-headless-shell.exe hoặc chrome.exe
 
 REM Use bundled Node.js if available, otherwise use system Node.js
 if exist nodejs\node.exe (

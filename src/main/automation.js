@@ -187,13 +187,24 @@ async function createBrowserInstance(config, logger) {
   const fs = require('fs');
   
   // Try to find bundled Chrome (for standalone distribution)
-  const bundledChromePath = path.join(__dirname, '..', '..', '..', 'chrome', 'chrome.exe');
+  // Tìm cả chrome.exe và chrome-headless-shell.exe
+  const chromeDir = path.join(__dirname, '..', '..', '..', 'chrome');
+  const possibleChromeNames = ['chrome.exe', 'chrome-headless-shell.exe', 'chrome'];
+  let bundledChromePath = null;
+  
+  for (const chromeName of possibleChromeNames) {
+    const chromePath = path.join(chromeDir, chromeName);
+    if (fs.existsSync(chromePath)) {
+      bundledChromePath = chromePath;
+      break;
+    }
+  }
   
   // Check environment variable first
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     logger.log(`🌐 Using Chrome from env variable: ${launchOptions.executablePath}`);
-  } else if (fs.existsSync(bundledChromePath)) {
+  } else if (bundledChromePath) {
     // Use bundled Chrome if available (standalone mode)
     launchOptions.executablePath = bundledChromePath;
     logger.log(`🌐 Using bundled Chrome: ${launchOptions.executablePath}`);
