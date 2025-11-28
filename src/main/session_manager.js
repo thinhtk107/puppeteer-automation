@@ -197,7 +197,7 @@ class SessionManager {
   /**
    * Cleanup inactive sessions (older than timeout)
    */
-  async cleanupInactiveSessions(timeoutMinutes = 30) {
+  async cleanupInactiveSessions(timeoutMinutes = 720) {
     const now = new Date();
     const sessionsToDelete = [];
     
@@ -232,7 +232,7 @@ class SessionManager {
   startCleanupInterval() {
     // Cleanup every 5 minutes
     setInterval(async () => {
-      await this.cleanupInactiveSessions(30);
+      await this.cleanupInactiveSessions(720);
     }, 5 * 60 * 1000);
     
     console.log('✓ Session cleanup interval started (every 5 minutes)');

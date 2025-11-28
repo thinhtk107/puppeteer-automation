@@ -6,7 +6,6 @@
 const { waitForTemplate, clickImage } = require('../helpers/matcher_helper');
 const fs = require('fs');
 const path = require('path');
-
 /**
  * Main function: Join Game Xoc (Tương đương SeleniumService.joinGameXoc)
  * @param {Page} page - Puppeteer page object
@@ -78,44 +77,26 @@ async function joinGameXoc(page, templatesDir, logger, options = {}) {
       } catch (templateError) {
         // Bỏ qua
       }
-    }
-    
-    // Strategy 3: Fixed position
-    if (!xocDiaClicked) {
-      logger && logger.log && logger.log('⚙️ Dùng vị trí cố định...');
-      
-      const canvasElement = await page.$('#GameCanvas');
-      if (!canvasElement) {
-        throw new Error('Không tìm thấy canvas');
-      }
-      
-      const boundingBox = await canvasElement.boundingBox();
-      if (!boundingBox) {
-        throw new Error('Không lấy được bounding box');
-      }
-      
-      // Based on the image you provided, Xóc Đĩa appears to be in the LEFT SIDE
-      // Typically at around 20-25% from left, and 40-50% from top
-      const clickX = Math.floor(boundingBox.width * 0.22); // 22% from left
-      const clickY = Math.floor(boundingBox.height * 0.45); // 45% from top
-      
-      logger && logger.log && logger.log(`Clicking at fixed position: (${clickX}, ${clickY})`);
-      logger && logger.log && logger.log(`Canvas size: ${boundingBox.width}x${boundingBox.height}`);
-      
-      const { clickAbsolute } = require('../helpers/click_helper');
-      await clickAbsolute(page, clickX, clickY, logger);
-      xocDiaClicked = true;
-      logger && logger.log && logger.log('✓ Clicked "XÓC ĐĨA" using fixed position');
-    }
-    
+    }   
     if (!xocDiaClicked) {
       throw new Error('Không thể click vào game "XÓC ĐĨA" bằng bất kỳ phương pháp nào');
     }
-    
-    await page.waitForTimeout(8000); // Tăng lên 8s để game load đầy đủ
-
-    // Take screenshot for debugging
-    await takeFullPageScreenshot(page, logger);
+    let gamePhung = false;
+    const { readCaptchaWithTesseract } = require('../websocket/github_models_helper');
+    while (!gamePhung) {
+      let pageImage = path.join(templatesDir, 'page.png');
+      await page.screenshot({ path: pageImage, fullPage: true });
+      let checkGamePhung = await readCaptchaWithTesseract(pageImage, logger);
+          
+          if (!checkGamePhung.includes('PHUNG')) {
+            logger.warn('⚠️ Chưa hiển thị game Phụng');
+            await page.waitForTimeout(2000);
+          } else {
+            gamePhung = true;
+            logger.log('✓ Đã hiển thị game Phụng');
+          }
+        }
+ 
 
     // BƯỚC 7: Click vào game PHỤNG
     logger && logger.log && logger.log('\n--- BƯỚC 7: Tìm game "PHỤNG" ---');
@@ -128,7 +109,6 @@ async function joinGameXoc(page, templatesDir, logger, options = {}) {
   } catch (error) {
     logger && logger.error && logger.error('!!! LỖI NGHIÊM TRỌNG TRONG QUY TRÌNH VÀO GAME !!!');
     logger && logger.error && logger.error('Error:', error.message);
-    await takeFullPageScreenshot(page, logger);
     throw error;
   }
 }
@@ -150,7 +130,6 @@ async function handleInitialPopups(page, templatesDir, logger) {
 
   // Chờ một chút để popup có thời gian xuất hiện
   logger && logger.log && logger.log('⏳ Chờ popup xuất hiện...');
-  await page.waitForTimeout(2000); // Chờ 2 giây trước khi bắt đầu tìm popup (giảm từ 2s)
 
   while (checks < maxChecks) {
     checks++;
@@ -165,7 +144,7 @@ async function handleInitialPopups(page, templatesDir, logger) {
         templatesMap,
         templatesDir,
         templateName,
-        3000, // Tăng timeout lên 3s để chờ popup xuất hiện
+        2000, // Tăng timeout lên 3s để chờ popup xuất hiện
         cfg.TEMPLATE_INTERVAL_MS || 500,
         logger
       );
@@ -276,60 +255,6 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger, options 
     } catch (textPhungError) {
       logger && logger.warn && logger.warn('Strategy 1 failed:', textPhungError.message);
     }
-    
-    // Strategy 2: Try template matching for game_phung.png
-    if (!phungClicked) {
-      try {
-        logger && logger.log && logger.log('Strategy 2: Trying template matching for game_phung.png...');
-        const phungCoords = await waitForTemplate(
-          page,
-          templatesMap,
-          templatesDir,
-          'game_phung.png',
-          5000,
-          cfg.TEMPLATE_INTERVAL_MS || 500,
-          logger
-        );
-
-        if (phungCoords) {
-          logger && logger.log && logger.log(`>>> Tìm thấy game PHỤNG tại: (${phungCoords.x}, ${phungCoords.y})`);
-          
-          const { clickAbsolute } = require('../helpers/click_helper');
-          await clickAbsolute(page, phungCoords.x, phungCoords.y, logger);
-          phungClicked = true;
-        }
-      } catch (templateError) {
-        logger && logger.warn && logger.warn('Strategy 2 failed:', templateError.message);
-      }
-    }
-    
-    // Strategy 3: Use fixed position (after clicking Xóc Đĩa, Phụng is typically at X=380)
-    if (!phungClicked) {
-      logger && logger.warn && logger.warn('⚠️ Could not find PHỤNG using any template, using fixed position');
-      
-      // Get canvas element to calculate position
-      const canvasElement = await page.$('#GameCanvas');
-      if (!canvasElement) {
-        throw new Error('Canvas element not found');
-      }
-      
-      const boundingBox = await canvasElement.boundingBox();
-      if (!boundingBox) {
-        throw new Error('Cannot get canvas bounding box');
-      }
-      
-      // Use fixed X coordinate and middle Y coordinate as fallback
-      const clickX = 380;
-      const clickY = Math.floor(boundingBox.height / 2);
-      
-      logger && logger.log && logger.log(`>>> Using fallback position: (${clickX}, ${clickY})`);
-      
-      const { clickAbsolute } = require('../helpers/click_helper');
-      await clickAbsolute(page, clickX, clickY, logger);
-      phungClicked = true;
-    }
-
-    await page.waitForTimeout(8000); // Tăng lên 8s để vào sảnh và load đầy đủ
     logger && logger.log && logger.log('\n✓ HOÀN TẤT QUY TRÌNH VÀO GAME PHỤNG');
     
     // Start real-time statistics broadcasting (non-blocking)
@@ -342,24 +267,7 @@ async function clickPhungGame(page, templatesDir, templatesMap, logger, options 
   } catch (error) {
     logger && logger.error && logger.error('!!! Lỗi khi click vào "PHỤNG" !!!');
     logger && logger.error && logger.error('Error:', error.message);
-    await takeFullPageScreenshot(page, logger);
     throw error;
-  }
-}
-
-/**
- * Take full page screenshot for debugging
- * @param {Page} page 
- * @param {Object} logger 
- */
-async function takeFullPageScreenshot(page, logger) {
-  try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const screenshotPath = path.join(require('os').homedir(), 'Desktop', `screenshot_${timestamp}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    logger && logger.log && logger.log(`   [Screenshot] Saved to: ${screenshotPath}`);
-  } catch (error) {
-    logger && logger.warn && logger.warn(`Failed to take screenshot: ${error.message}`);
   }
 }
 

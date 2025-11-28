@@ -17,12 +17,18 @@ async function setupWebSocketHook(page, logger, options = {}) {
     const sessionId = options.sessionId || 'default-session';
     const showStatsOnScreen = options.showStatsOnScreen !== false; // Default true
     
+    // Lấy các giới hạn từ options (0 = không giới hạn)
+    const targetProfit = options.targetProfit || 0; // Mục tiêu thắng (VND)
+    const maxLoss = options.maxLoss || 0; // Mức thua tối đa (VND)
+    
     logger && logger.log && logger.log('\n========================================');
     logger && logger.log && logger.log('   WEBSOCKET HOOK SETUP - START');
     logger && logger.log && logger.log(`   Session ID: ${sessionId}`);
     logger && logger.log && logger.log(`   Base Bet Amount: ${baseBet}`);
     logger && logger.log && logger.log(`   Bet Amounts: ${JSON.stringify(betAmounts)}`);
     logger && logger.log && logger.log(`   Show Stats On Screen: ${showStatsOnScreen}`);
+    logger && logger.log && logger.log(`   Target Profit: ${targetProfit} VND (0 = unlimited)`);
+    logger && logger.log && logger.log(`   Max Loss: ${maxLoss} VND (0 = unlimited)`);
     logger && logger.log && logger.log('========================================\n');
 
     // Define the hook script (with session isolation)
@@ -98,6 +104,11 @@ async function setupWebSocketHook(page, logger, options = {}) {
       // --- BIẾN CƯỢC 4 VÁN ---
       session.myRoundCounter = 0;
       session.isWaitingForFixedBet = false;
+      
+      // --- BIẾN GIỚI HẠN (LIMITS) ---
+      session.myTargetProfit = ${targetProfit}; // Mục tiêu lợi nhuận (0 = không giới hạn)
+      session.myMaxLossLimit = ${maxLoss}; // Giới hạn thua tối đa (0 = không giới hạn)
+      session.myAutoStopTriggered = false; // Cờ để ngăn cược sau khi đạt giới hạn
       
       // === HELPER FUNCTION: Chia nhỏ số tiền cược thành các mệnh giá có sẵn ===
       // Các mệnh giá có sẵn trong game (sắp xếp từ lớn đến nhỏ)
@@ -460,103 +471,111 @@ async function setupWebSocketHook(page, logger, options = {}) {
                     } else if (window.isWaitingForFixedBet) {
                         window.isWaitingForFixedBet = false; // Đã nhận kết quả
                         if (currentWinningEid === session.myLastBetEid) {
-                            // THẮNG! (FixedBet - KHÔNG TÍNH VÀO THỐNG KÊ)
+                            // THẮNG! (FixedBet - TÍNH VÀO THỐNG KÊ)
                             const fixedBetAmount = 500; // Cược cố định 500đ
                             const winAmount = fixedBetAmount * 0.98;
                             
-                            logStats('SOCKET (FixedBet): THẮNG! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thành công. Lãi: +' + winAmount.toLocaleString('vi-VN') + 'đ (KHÔNG TÍNH VÀO THỐNG KÊ)');
+                            logStats('SOCKET (FixedBet): THẮNG! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thành công. Lãi: +' + winAmount.toLocaleString('vi-VN') + 'đ');
                             
-                            // KHÔNG CẬP NHẬT THỐNG KÊ (chỉ log)
-                            // session.myTotalWins++; // ← COMMENT OUT
-                            // session.myTotalWinAmount += winAmount; // ← COMMENT OUT
+                            // CẬP NHẬT THỐNG KÊ
+                            session.myTotalWins++;
+                            session.myTotalWinAmount += winAmount;
                             const profitLoss = session.myTotalWinAmount - session.myTotalLossAmount;
                             
-                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy Martingale: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
                             
-                            // KHÔNG CẬP NHẬT STREAK (FixedBet không ảnh hưởng streak)
-                            // session.myCurrentWinStreak++; // ← COMMENT OUT
-                            // session.myCurrentLossStreak = 0; // ← COMMENT OUT
+                            // CẬP NHẬT STREAK
+                            session.myCurrentWinStreak++;
+                            session.myCurrentLossStreak = 0;
                             
-                            // Reset về mức 1 SAU FixedBet WIN
-                            session.myCurrentBetLevel = 0;
-                            session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
+                            // KHÔNG RESET SAU FixedBet WIN - Giữ nguyên Martingale level
+                            // session.myCurrentBetLevel = 0;
+                            // session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
                             
-                            logStats('SOCKET (FixedBet WIN): ✅ Reset Martingale về mức 1 (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
+                            // Update max win streak
+                            if (session.myCurrentWinStreak > session.myMaxWinStreak) {
+                                session.myMaxWinStreak = session.myCurrentWinStreak;
+                            }
                             
-                            // Broadcast nextBetAmount = 1000đ (mức 1)
-                            // KHÔNG gửi lastBet (không hiển thị trong lịch sử)
-                            // GỬI lastOutcome = 'fixedbet' để client không tính toán nhầm
+                            logStats('SOCKET (FixedBet WIN): ✅ Giữ nguyên Martingale level ' + (session.myCurrentBetLevel + 1) + ' (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
+                            
+                            // Broadcast full stats including FixedBet
                             console.log('[BETTING_STATS]' + JSON.stringify({
                                 currentBalance: session.myCurrentBalance,
                                 initialBalance: session.myInitialBalance,
                                 profitLoss: profitLoss,
-                                nextBetAmount: session.myCurrentBetAmount, // LUÔN là 1000đ sau FixedBet
-                                currentBetLevel: 1, // LUÔN là mức 1
+                                totalBets: session.myTotalBetsPlaced,
+                                winCount: session.myTotalWins,
+                                lossCount: session.myTotalLosses,
+                                totalWinAmount: session.myTotalWinAmount,
+                                totalLossAmount: session.myTotalLossAmount,
+                                currentWinStreak: session.myCurrentWinStreak,
+                                currentLossStreak: session.myCurrentLossStreak,
+                                maxWinStreak: session.myMaxWinStreak,
+                                maxLossStreak: session.myMaxLossStreak,
+                                nextBetAmount: session.myCurrentBetAmount,
+                                currentBetLevel: session.myCurrentBetLevel + 1,
                                 maxBetLevel: session.myBetAmounts.length,
-                                lastOutcome: 'fixedbet' // Đánh dấu là FixedBet WIN
+                                lastBet: {
+                                    eid: session.myLastBetEid,
+                                    amount: fixedBetAmount,
+                                    winAmount: winAmount
+                                },
+                                lastOutcome: 'win'
                             }));
                         } else {
-                            // THUA! (FixedBet - KHÔNG TÍNH VÀO THỐNG KÊ)
+                            // THUA! (FixedBet - TÍNH VÀO THỐNG KÊ)
                             const fixedBetAmount = 500; // Cược cố định 500đ
                             const lossAmount = fixedBetAmount; // LUÔN LUÔN là số tiền vừa cược
+                            
+                            logStats('SOCKET (FixedBet): THUA! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thất bại. Lỗ: -' + lossAmount.toLocaleString('vi-VN') + 'đ');
+                            
+                            // CẬP NHẬT THỐNG KÊ
+                            session.myTotalLosses++;
+                            session.myTotalLossAmount += lossAmount;
                             const profitLoss = session.myTotalWinAmount - session.myTotalLossAmount;
                             
-                            logStats('SOCKET (FixedBet): THUA! Cược ' + fixedBetAmount.toLocaleString('vi-VN') + 'đ (EID ' + session.myLastBetEid + ') thất bại. Lỗ: -' + lossAmount.toLocaleString('vi-VN') + 'đ (KHÔNG TÍNH VÀO THỐNG KÊ)');
+                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
                             
-                            // KHÔNG CẬP NHẬT THỐNG KÊ (chỉ log)
-                            // session.myTotalLosses++; // ← COMMENT OUT
-                            // session.myTotalLossAmount += lossAmount; // ← COMMENT OUT
+                            // CẬP NHẬT STREAK
+                            session.myCurrentLossStreak++;
+                            session.myCurrentWinStreak = 0;
                             
-                            logStats('SOCKET (FixedBet): Lợi nhuận tích lũy Martingale: ' + (profitLoss >= 0 ? '+' : '') + profitLoss.toLocaleString('vi-VN') + 'đ');
+                            // KHÔNG RESET SAU FixedBet LOSS - Giữ nguyên Martingale level
+                            // session.myCurrentBetLevel = 0;
+                            // session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
                             
-                            // KHÔNG CẬP NHẬT STREAK (FixedBet không ảnh hưởng streak)
-                            // session.myCurrentLossStreak++; // ← COMMENT OUT
-                            // session.myCurrentWinStreak = 0; // ← COMMENT OUT
+                            // Update max loss streak
+                            if (session.myCurrentLossStreak > session.myMaxLossStreak) {
+                                session.myMaxLossStreak = session.myCurrentLossStreak;
+                            }
                             
-                            // Reset về mức 1 SAU FixedBet LOSS
-                            session.myCurrentBetLevel = 0;
-                            session.myCurrentBetAmount = session.myBetAmounts[0]; // Reset về 1000đ
+                            logStats('SOCKET (FixedBet LOSS): ✅ Giữ nguyên Martingale level ' + (session.myCurrentBetLevel + 1) + ' (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
                             
-                            logStats('SOCKET (FixedBet LOSS): ✅ Reset Martingale về mức 1 (' + session.myCurrentBetAmount.toLocaleString('vi-VN') + 'đ)');
-                            
-                            // Broadcast nextBetAmount = 1000đ (mức 1)
-                            // KHÔNG gửi lastBet (không hiển thị trong lịch sử)
-                            // GỬI lastOutcome = 'fixedbet' để client không tính toán nhầm
+                            // Broadcast full stats including FixedBet
                             console.log('[BETTING_STATS]' + JSON.stringify({
                                 currentBalance: session.myCurrentBalance,
                                 initialBalance: session.myInitialBalance,
                                 profitLoss: profitLoss,
-                                nextBetAmount: session.myCurrentBetAmount, // LUÔN là 1000đ sau FixedBet
-                                currentBetLevel: 1, // LUÔN là mức 1
+                                totalBets: session.myTotalBetsPlaced,
+                                winCount: session.myTotalWins,
+                                lossCount: session.myTotalLosses,
+                                totalWinAmount: session.myTotalWinAmount,
+                                totalLossAmount: session.myTotalLossAmount,
+                                currentWinStreak: session.myCurrentWinStreak,
+                                currentLossStreak: session.myCurrentLossStreak,
+                                maxWinStreak: session.myMaxWinStreak,
+                                maxLossStreak: session.myMaxLossStreak,
+                                nextBetAmount: session.myCurrentBetAmount,
+                                currentBetLevel: session.myCurrentBetLevel + 1,
                                 maxBetLevel: session.myBetAmounts.length,
-                                lastOutcome: 'fixedbet' // Đánh dấu là FixedBet LOSS
+                                lastBet: {
+                                    eid: session.myLastBetEid,
+                                    amount: fixedBetAmount,
+                                    lossAmount: lossAmount
+                                },
+                                lastOutcome: 'loss'
                             }));
-                            
-                            // KHÔNG BROADCAST LASTBET (không hiển thị trong lịch sử)
-                            // console.log('[BETTING_STATS]' + JSON.stringify({
-                            //     currentBalance: session.myCurrentBalance,
-                            //     initialBalance: session.myInitialBalance,
-                            //     profitLoss: profitLoss,
-                            //     totalBets: session.myTotalBetsPlaced,
-                            //     winCount: session.myTotalWins,
-                            //     lossCount: session.myTotalLosses,
-                            //     highestBet: session.myHighestBet,
-                            //     totalWinAmount: session.myTotalWinAmount,
-                            //     totalLossAmount: session.myTotalLossAmount,
-                            //     currentWinStreak: session.myCurrentWinStreak,
-                            //     currentLossStreak: session.myCurrentLossStreak,
-                            //     maxWinStreak: session.myMaxWinStreak,
-                            //     maxLossStreak: session.myMaxLossStreak,
-                            //     currentBetLevel: 1,
-                            //     maxBetLevel: 1,
-                            //     nextBetAmount: fixedBetAmount,
-                            //     lastBet: {
-                            //         eid: session.myLastBetEid,
-                            //         amount: fixedBetAmount,
-                            //         lossAmount: lossAmount
-                            //     },
-                            //     lastOutcome: 'loss'
-                            // })); // ← COMMENT OUT
                         }
                         // Log thống kê (chỉ log, không broadcast vì đã broadcast ở trên)
                         logStats('SOCKET (Stats): Tổng cược: ' + session.myTotalBetsPlaced + ' | Thắng: ' + session.myTotalWins + ' | Thua: ' + session.myTotalLosses);
@@ -674,6 +693,43 @@ async function setupWebSocketHook(page, logger, options = {}) {
                             // Lấy số tiền cược hiện tại (đã xử lý Martingale)
                             const amountToBet = session.myCurrentBetAmount;
                             
+                            // === KIỂM TRA GIỚI HẠN LỢI NHUẬN/THUA LỖ ===
+                            if (!session.myAutoStopTriggered) {
+                                const currentProfit = session.myTotalWinAmount - session.myTotalLossAmount;
+                                
+                                // Kiểm tra đạt mục tiêu lợi nhuận
+                                if (session.myTargetProfit > 0 && currentProfit >= session.myTargetProfit) {
+                                    session.myAutoStopTriggered = true;
+                                    logStats('[Session ' + SESSION_ID + '] 🎯 ĐÃ ĐẠT MỤC TIÊU LỢI NHUẬN: ' + currentProfit.toLocaleString('vi-VN') + 'đ >= ' + session.myTargetProfit.toLocaleString('vi-VN') + 'đ');
+                                    logStats('[Session ' + SESSION_ID + '] ⛔ DỪNG ĐẶT CƯỢC TỰ ĐỘNG!');
+                                    console.log('[TARGET_PROFIT_REACHED]' + JSON.stringify({
+                                        sessionId: SESSION_ID,
+                                        currentProfit: currentProfit,
+                                        targetProfit: session.myTargetProfit,
+                                        message: 'Đã đạt mục tiêu lợi nhuận. Dừng đặt cược tự động.'
+                                    }));
+                                    return;
+                                }
+                                
+                                // Kiểm tra vượt mức thua tối đa
+                                if (session.myMaxLossLimit > 0 && currentProfit <= -session.myMaxLossLimit) {
+                                    session.myAutoStopTriggered = true;
+                                    logStats('[Session ' + SESSION_ID + '] 🛑 ĐÃ VƯỢT MỨC THUA TỐI ĐA: ' + currentProfit.toLocaleString('vi-VN') + 'đ <= -' + session.myMaxLossLimit.toLocaleString('vi-VN') + 'đ');
+                                    logStats('[Session ' + SESSION_ID + '] ⛔ DỪNG ĐẶT CƯỢC TỰ ĐỘNG!');
+                                    console.log('[MAX_LOSS_REACHED]' + JSON.stringify({
+                                        sessionId: SESSION_ID,
+                                        currentLoss: -currentProfit,
+                                        maxLoss: session.myMaxLossLimit,
+                                        message: 'Đã vượt mức thua tối đa. Dừng đặt cược tự động.'
+                                    }));
+                                    return;
+                                }
+                            } else {
+                                // Đã dừng tự động trước đó, không đặt cược nữa
+                                logStats('[Session ' + SESSION_ID + '] ⛔ ĐÃ DỪNG TỰ ĐỘNG (đạt giới hạn). Bỏ qua cược.');
+                                return;
+                            }
+                            
                             // === CHECK PAUSE FLAG TRƯỚC KHI ĐẶT CƯỢC ===
                             // Kiểm tra nếu session này đã được tạm dừng
                             if (window.sessionPauseFlags && window.sessionPauseFlags[\`${sessionId}\`]) {
@@ -748,6 +804,43 @@ async function setupWebSocketHook(page, logger, options = {}) {
                             const amountToBet = 500; // CƯỢC CỐ ĐỊNH = 500đ (không tính vào thống kê)
                             const eidToBet = 2; // Cược mặc định EID 2 (bạn có thể đổi thành 5 nếu muốn)
                             
+                            // === KIỂM TRA GIỚI HẠN LỢI NHUẬN/THUA LỖ ===
+                            if (!session.myAutoStopTriggered) {
+                                const currentProfit = session.myTotalWinAmount - session.myTotalLossAmount;
+                                
+                                // Kiểm tra đạt mục tiêu lợi nhuận
+                                if (session.myTargetProfit > 0 && currentProfit >= session.myTargetProfit) {
+                                    session.myAutoStopTriggered = true;
+                                    logStats('[Session ' + SESSION_ID + '] 🎯 ĐÃ ĐẠT MỤC TIÊU LỢI NHUẬN: ' + currentProfit.toLocaleString('vi-VN') + 'đ >= ' + session.myTargetProfit.toLocaleString('vi-VN') + 'đ');
+                                    logStats('[Session ' + SESSION_ID + '] ⛔ DỪNG ĐẶT CƯỢC TỰ ĐỘNG!');
+                                    console.log('[TARGET_PROFIT_REACHED]' + JSON.stringify({
+                                        sessionId: SESSION_ID,
+                                        currentProfit: currentProfit,
+                                        targetProfit: session.myTargetProfit,
+                                        message: 'Đã đạt mục tiêu lợi nhuận. Dừng đặt cược tự động.'
+                                    }));
+                                    return;
+                                }
+                                
+                                // Kiểm tra vượt mức thua tối đa
+                                if (session.myMaxLossLimit > 0 && currentProfit <= -session.myMaxLossLimit) {
+                                    session.myAutoStopTriggered = true;
+                                    logStats('[Session ' + SESSION_ID + '] 🛑 ĐÃ VƯỢT MỨC THUA TỐI ĐA: ' + currentProfit.toLocaleString('vi-VN') + 'đ <= -' + session.myMaxLossLimit.toLocaleString('vi-VN') + 'đ');
+                                    logStats('[Session ' + SESSION_ID + '] ⛔ DỪNG ĐẶT CƯỢC TỰ ĐỘNG!');
+                                    console.log('[MAX_LOSS_REACHED]' + JSON.stringify({
+                                        sessionId: SESSION_ID,
+                                        currentLoss: -currentProfit,
+                                        maxLoss: session.myMaxLossLimit,
+                                        message: 'Đã vượt mức thua tối đa. Dừng đặt cược tự động.'
+                                    }));
+                                    return;
+                                }
+                            } else {
+                                // Đã dừng tự động trước đó, không đặt cược nữa
+                                logStats('[Session ' + SESSION_ID + '] ⛔ ĐÃ DỪNG TỰ ĐỘNG (đạt giới hạn). Bỏ qua cược.');
+                                return;
+                            }
+                            
                             // === CHECK PAUSE FLAG TRƯỚC KHI ĐẶT CƯỢC ===
                             if (window.sessionPauseFlags && window.sessionPauseFlags[\`${sessionId}\`]) {
                                 logStats('SOCKET (Pause): ⏸️ Đặt cược đang tạm dừng. Bấm "Tiếp tục" để đặt cược lại.');
@@ -763,44 +856,44 @@ async function setupWebSocketHook(page, logger, options = {}) {
                                 return; // Dừng, không đặt cược
                             }
                             
-                            // KHÔNG TRACK HIGHEST BET (FixedBet không tính vào thống kê)
-                            // if (amountToBet > session.myHighestBet) {
-                            //     session.myHighestBet = amountToBet;
-                            //     logStats('SOCKET (Stats): Cập nhật tiền cược cao nhất: ' + session.myHighestBet.toLocaleString('vi-VN') + 'đ');
-                            // }
+                            // Track highest bet for FixedBet too
+                            if (amountToBet > session.myHighestBet) {
+                                session.myHighestBet = amountToBet;
+                                logStats('SOCKET (Stats): Cập nhật tiền cược cao nhất: ' + session.myHighestBet.toLocaleString('vi-VN') + 'đ');
+                            }
                             
-                            logStats('SOCKET (Auto-Trigger): ĐỦ 4 VÁN (không cược streak)! Kích hoạt cược số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định - KHÔNG TÍNH VÀO THỐNG KÊ)');
+                            logStats('SOCKET (Auto-Trigger): ĐỦ 4 VÁN (không cược streak)! Kích hoạt cược số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định)');
  
                             logStats('SOCKET (Auto-Trigger): Cược EID: ' + eidToBet + ' | Số tiền: ' + amountToBet.toLocaleString('vi-VN') + 'đ (Cố định)');
                             
-                            // Đặt cờ chờ kết quả CỐ ĐỊNH (không ảnh hưởng Martingale)
+                            // Đặt cờ chờ kết quả CỐ ĐỊNH
                             window.isWaitingForFixedBet = true; // <-- Cờ riêng
                             session.myLastBetEid = eidToBet; // Lưu lại EID đã cược
                             
-                            // KHÔNG TĂNG THỐNG KÊ (FixedBet không tính)
-                            // session.myTotalBetsPlaced++; // ← COMMENT OUT
-                            // session.myTotalBetAmount += amountToBet; // ← COMMENT OUT
+                            // TĂNG THỐNG KÊ (FixedBet giờ tính vào thống kê)
+                            session.myTotalBetsPlaced++;
+                            session.myTotalBetAmount += amountToBet;
                             
-                            // KHÔNG BROADCAST STATS (FixedBet không hiển thị trước khi đặt cược)
-                            // console.log('[BETTING_STATS]' + JSON.stringify({
-                            //     currentBalance: session.myCurrentBalance,
-                            //     initialBalance: session.myInitialBalance,
-                            //     profitLoss: session.myTotalWinAmount - session.myTotalLossAmount,
-                            //     totalBets: session.myTotalBetsPlaced,
-                            //     totalBetAmount: session.myTotalBetAmount,
-                            //     winCount: session.myTotalWins,
-                            //     lossCount: session.myTotalLosses,
-                            //     highestBet: session.myHighestBet,
-                            //     totalWinAmount: session.myTotalWinAmount,
-                            //     totalLossAmount: session.myTotalLossAmount,
-                            //     currentWinStreak: session.myCurrentWinStreak,
-                            //     currentLossStreak: session.myCurrentLossStreak,
-                            //     maxWinStreak: session.myMaxWinStreak,
-                            //     maxLossStreak: session.myMaxLossStreak,
-                            //     currentBet: amountToBet,
-                            //     lastBet: null,
-                            //     lastOutcome: null
-                            // })); // ← COMMENT OUT
+                            // Broadcast stats before FixedBet
+                            console.log('[BETTING_STATS]' + JSON.stringify({
+                                currentBalance: session.myCurrentBalance,
+                                initialBalance: session.myInitialBalance,
+                                profitLoss: session.myTotalWinAmount - session.myTotalLossAmount,
+                                totalBets: session.myTotalBetsPlaced,
+                                totalBetAmount: session.myTotalBetAmount,
+                                winCount: session.myTotalWins,
+                                lossCount: session.myTotalLosses,
+                                highestBet: session.myHighestBet,
+                                totalWinAmount: session.myTotalWinAmount,
+                                totalLossAmount: session.myTotalLossAmount,
+                                currentWinStreak: session.myCurrentWinStreak,
+                                currentLossStreak: session.myCurrentLossStreak,
+                                maxWinStreak: session.myMaxWinStreak,
+                                maxLossStreak: session.myMaxLossStreak,
+                                currentBet: amountToBet,
+                                lastBet: null,
+                                lastOutcome: null
+                            }));
                             
                             // Gửi cược
                             setTimeout(() => {

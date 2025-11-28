@@ -387,10 +387,10 @@ async function readCaptchaWithTesseract(imagePath, logger) {
     let captchaText = (result.data.text || '').trim();
     logger && logger.log && logger.log(`   → Raw: "${captchaText}"`);
     
-    // Clean text - remove spaces and special chars (preserve case and numbers)
+    // Clean text - remove spaces and special chars (preserve Vietnamese, English, and numbers)
     captchaText = captchaText
       .replace(/\s+/g, '')
-      .replace(/[^a-zA-Z0-9]/g, '');
+      .replace(/[^a-zA-Z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]/g, '');
     
     logger && logger.log && logger.log(`   → Cleaned: "${captchaText}"`);
     
@@ -429,7 +429,7 @@ async function initTesseractWorker(logger) {
       const basePath = path.dirname(process.execPath);
       
       tesseractOptions.workerPath = path.join(basePath, 'node_modules', 'tesseract.js', 'dist', 'worker.min.js');
-      tesseractOptions.langPath = basePath; // Assumes eng.traineddata is at the root of the executable
+      tesseractOptions.langPath = basePath; // Assumes eng.traineddata and vie.traineddata are at the root of the executable
       tesseractOptions.corePath = path.join(basePath, 'node_modules', 'tesseract.js-core', 'tesseract-core.wasm.js');
 
       // Verify paths for debugging
@@ -439,7 +439,7 @@ async function initTesseractWorker(logger) {
       logger && logger.log && logger.log(`   - Core Path: ${tesseractOptions.corePath}`);
     }
 
-    const worker = await createWorker('eng', 1, tesseractOptions);
+    const worker = await createWorker('eng+vie', 1, tesseractOptions);
     
     tesseractWorker = worker;
     logger && logger.log && logger.log('   ✓ Tesseract worker ready');

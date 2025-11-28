@@ -20,7 +20,7 @@ def main():
 
     res = cv2.matchTemplate(page, tpl, cv2.TM_CCOEFF_NORMED)
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-    if max_val < 0.75:
+    if max_val < 0.9:
         print('NOT_FOUND')
         sys.exit(0)
     top_left = max_loc

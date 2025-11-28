@@ -1,5 +1,4 @@
 const puppeteer = require('puppeteer');
-const puppeteerCore = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 
@@ -694,7 +693,7 @@ async function runAutomation(payload, uploadedFiles) {
     
     logger.log('⏳ Đang chờ button login (button_login.png) xuất hiện...');
     let buttonFound = false;
-    const maxWaitTime = 120000; // 2 phút
+    const maxWaitTime = 360000; // 6 phút
     const startWaitTime = Date.now();
     
     while (!buttonFound && (Date.now() - startWaitTime < maxWaitTime)) {
@@ -720,7 +719,7 @@ async function runAutomation(payload, uploadedFiles) {
         
         if (stillLoading) {
           logger.log(`   ⚠️ Page vẫn đang loading, chờ thêm...`);
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(2000);
           continue; // Thử lại
         }
         
@@ -779,62 +778,25 @@ async function runAutomation(payload, uploadedFiles) {
           logger.log('Verifying login popup is closed...');
           const { waitForTemplate } = require('./helpers/matcher_helper');
           const cfg = require('./config/config');
-          
-          const popupStillVisible = await new Promise((resolve) => {
-            waitForTemplate(
-              page,
-              templatesMap,
-              templatesDir,
-              'taigame.png',
-              3000, // Short timeout
-              cfg.TEMPLATE_INTERVAL_MS || 500,
-              logger
-            )
-              .then(() => resolve(true))  // Found = popup still visible
-              .catch(() => resolve(false)); // Not found = popup closed (good!)
-          });
-          
-          if (popupStillVisible) {
-            logger.warn('⚠️ Login popup is still visible, waiting longer...');
-            await page.waitForTimeout(3000);
-          } else {
-            logger.log('✓ Login popup confirmed closed');
+          let loadingGame = false;
+          const { readCaptchaWithTesseract } = require('./websocket/github_models_helper');
+          while (!loadingGame) {
+            logger.log('⏳ Kiểm tra trạng thái tải game..');
+            const pageImage = path.join(templatesDir, 'page.png');
+            await page.screenshot({ path: pageImage, fullPage: true });
+            let checkLoadGame = await readCaptchaWithTesseract(pageImage, logger);
+            if (checkLoadGame.includes('ĐangTảiGame') || checkLoadGame.includes('DangTaiGame')) {
+              logger.warn('⚠️ Đang vào game, waiting longer...');
+              await page.waitForTimeout(2000);
+            } else {
+            loadingGame = true;
+            logger.log('✓ Đã vào game');
           }
+        }
         } catch (verifyError) {
           logger.warn('Could not verify popup status:', verifyError.message);
         }
-        
-        // Wait for canvas to stabilize after login
-        logger.log('Waiting for game canvas to stabilize...');
-        try {
-          const { waitForCanvasAndStabilize } = require('./helpers/screenshot_helper');
-          await waitForCanvasAndStabilize(page, 3000);
-          logger.log('✓ Canvas stabilized');
-        } catch (canvasError) {
-          logger.warn('Canvas stabilization check failed:', canvasError.message);
-          // Continue anyway
-        }
-        
-        // Check WebSocket after login (if not created during initial page load)
-        if (payload.enableWebSocketHook !== false) {
-          try {
-            logger.log('🔌 Kiểm tra WebSocket sau login...');
-            const { getWebSocketState } = require('./websocket/websocket_hook');
-            const wsStateAfterLogin = await getWebSocketState(page, logger, sessionId);
-            
-            if (wsStateAfterLogin && wsStateAfterLogin.exists) {
-              logger.log(`✓ WebSocket: ${wsStateAfterLogin.readyStateText} - ${wsStateAfterLogin.url}`);
-              if (wsStateAfterLogin.bestRid) {
-                logger.log(`✓ Best Room ID: ${wsStateAfterLogin.bestRid}`);
-              }
-            } else {
-              logger.warn('⚠️ WebSocket vẫn chưa được tạo sau login');
-              logger.warn('   Có thể cần thêm tương tác để trigger WebSocket');
-            }
-          } catch (wsError) {
-            logger.warn('⚠️ Lỗi khi check WebSocket:', wsError.message);
-          }
-        }                
+                       
         // CHỜ PAGE LOAD XONG TRƯỚC KHI JOIN GAME
         logger.log('═══════════════════════════════════════════════════════');
         logger.log('🔍 KIỂM TRA PAGE LOAD TRƯỚC KHI VÀO GAME');
@@ -849,80 +811,6 @@ async function runAutomation(payload, uploadedFiles) {
           logger.warn('⚠️ Network không idle sau 10s, tiếp tục...');
         }
         
-        // Đợi thêm để UI render
-        await page.waitForTimeout(500); // Giảm từ 1000ms → 500ms
-        logger.log('✅ Đã đợi thêm 0.5s để UI render');
-
-        // CHỜ ĐẾN KHI GAME CANVAS SẴN SÀNG (thay vì chờ taigame.png biến mất)
-        logger.log('⏳ Đang chờ game canvas sẵn sàng...');
-        let gameReady = false;
-        const maxWaitPopup = 10000; // Giảm từ 15s → 10s
-        const startWaitPopup = Date.now();
-        
-        while (!gameReady && (Date.now() - startWaitPopup < maxWaitPopup)) {
-          // Kiểm tra game canvas đã sẵn sàng
-          const canvasOk = await page.evaluate(() => {
-            const canvas = document.querySelector('#GameCanvas');
-            if (!canvas) return false;
-            
-            // Kiểm tra canvas có kích thước hợp lệ
-            if (canvas.width <= 0 || canvas.height <= 0) return false;
-            
-            // Kiểm tra không có popup login (kiểm tra bằng text thay vì ảnh)
-            const bodyText = document.body.innerText || '';
-            const hasLoginPopup = bodyText.includes('Tải Game') || 
-                                 bodyText.includes('ĐANG TẢI GAME') ||
-                                 bodyText.includes('Phiên bản');
-            
-            return !hasLoginPopup;
-          });
-          
-          if (!canvasOk) {
-            const elapsed = Math.floor((Date.now() - startWaitPopup) / 1000);
-            logger.log(`   ⏳ Game chưa sẵn sàng (đã chờ ${elapsed}s)... Đợi thêm...`);
-            await page.waitForTimeout(1000); // Giảm từ 2000ms → 1000ms
-          } else {
-            logger.log('✅ Game canvas đã sẵn sàng!');
-            gameReady = true;
-          }
-        }
-        
-        if (!gameReady) {
-          logger.warn(`⚠️ Game chưa sẵn sàng sau ${Math.floor(maxWaitPopup / 1000)}s, tiếp tục anyway...`);
-        }
-        
-        // VALIDATION THÊM: Kiểm tra game đã sẵn sàng
-        logger.log('🔍 Kiểm tra game đã sẵn sàng...');
-        
-        // Check 1: Canvas đã load
-        const canvasReady = await page.evaluate(() => {
-          const canvas = document.querySelector('#GameCanvas');
-          return canvas && canvas.width > 0 && canvas.height > 0;
-        });
-        
-        if (!canvasReady) {
-          logger.log('⚠️ Canvas chưa sẵn sàng, đợi thêm...');
-          await page.waitForTimeout(1000); // Giảm từ 2000ms → 1000ms
-        } else {
-          logger.log('✅ Canvas đã sẵn sàng');
-        }
-        
-        // // Check 2: Không còn loading text
-        // const stillLoading = await page.evaluate(() => {
-        //   const text = document.body.innerText;
-        //   return text.includes('ĐANG TẢI') || text.includes('LOADING') || text.includes('%');
-        // });
-        
-        // if (stillLoading) {
-        //   logger.log('⚠️ Page vẫn đang loading, đợi thêm...');
-        //   await page.waitForTimeout(5000);
-        // } else {
-        //   logger.log('✅ Page không còn loading');
-        // }
-        
-        // // Đợi thêm để chắc chắn UI stable
-        // await page.waitForTimeout(2000);
-        
         logger.log('═══════════════════════════════════════════════════════');
         logger.log('🎮 BẮT ĐẦU JOIN GAME FLOW');
         logger.log('═══════════════════════════════════════════════════════');
@@ -931,11 +819,7 @@ async function runAutomation(payload, uploadedFiles) {
         logger.log('Starting join game flow...');
         try {
           const { joinGameXoc } = require('./flows/join_game_flow');
-          logger.log('✓ join_game_flow module loaded successfully');
-          
-          // Debug: Log payload values
-          logger.log(`📊 Payload baseBetAmount: ${payload.baseBetAmount} (type: ${typeof payload.baseBetAmount})`);
-          logger.log(`📊 Payload initialBalance: ${payload.initialBalance} (type: ${typeof payload.initialBalance})`);
+          logger.log('✓ join_game_flow module loaded successfully');          
           
           // Pass baseBetAmount and initialBalance to join game flow
           const options = {
